@@ -1,0 +1,14 @@
+<settings>
+    <setting propertyKey="@Properties.ftp" title="@Strings.FtpTitle">
+        <settingConfig type="numeric" min="50" max="600"/>
+    </setting>
+    <setting propertyKey="@Properties.lt1" title="@Strings.Lt1Title">
+        <settingConfig type="numeric" min="0" max="500"/>
+    </setting>
+    <setting propertyKey="@Properties.grossEfficiency" title="@Strings.GeTitle">
+        <settingConfig type="numeric" min="15" max="28"/>
+    </setting>
+    <setting propertyKey="@Properties.weight" title="@Strings.WeightTitle">
+        <settingConfig type="numeric" min="0" max="200"/>
+    </setting>
+</settings>

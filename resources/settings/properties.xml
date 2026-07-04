@@ -1,0 +1,10 @@
+<properties>
+    <!-- Functional Threshold Power, watts (required) -->
+    <property id="ftp" type="number">250</property>
+    <!-- LT1 / aerobic threshold, watts. 0 = not tested -> estimated as 0.70 * FTP -->
+    <property id="lt1" type="number">0</property>
+    <!-- Gross efficiency, percent. Typical trained cyclist ~19-24% -->
+    <property id="grossEfficiency" type="number">21</property>
+    <!-- Body weight, kg. Set it to match your Garmin profile. 0 = disable glycogen readout -->
+    <property id="weight" type="number">75</property>
+</properties>

@@ -1,0 +1,17 @@
+# Connect IQ build artifacts
+bin/
+*.prg
+*.iq
+*.debug.xml
+
+# Developer key (never commit private keys)
+*.der
+developer_key*
+
+# Scratch / temp
+*.tmp
+*.bak
+
+# OS
+Thumbs.db
+.DS_Store

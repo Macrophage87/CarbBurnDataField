@@ -1,0 +1,7 @@
+<strings>
+    <string id="AppName">Carb Burn</string>
+    <string id="FtpTitle">FTP (watts)</string>
+    <string id="Lt1Title">LT1 / aerobic threshold (watts, 0 = not tested)</string>
+    <string id="GeTitle">Gross efficiency (%)</string>
+    <string id="WeightTitle">Body weight (kg, match Garmin profile)</string>
+</strings>
