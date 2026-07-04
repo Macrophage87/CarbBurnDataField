@@ -4,6 +4,7 @@ using Toybox.Activity;
 using Toybox.Application;
 using Toybox.Math;
 using Toybox.Lang;
+using Toybox.System;
 
 //
 // Carb Burn data field
@@ -28,8 +29,9 @@ using Toybox.Lang;
 //   b) Glycogen-store depletion %. Total body glycogen scales with body mass
 //      (~8 g/kg), so weight lets us express carbs burned as a share of stores.
 //
-// Displayed readouts (small/short fields lay them out side by side; taller fields
-// stack them and reveal extra rows). The unit is shown in each label:
+// Displayed readouts. Layout is chosen by field shape (resolution independent):
+// a field wider than tall shows the 3 core readouts side by side; a taller field
+// stacks them and reveals extra rows as it grows. The unit is shown in each label:
 //   CARBS g    total carbohydrate burned
 //   FAT g      total fat burned                     (very large / full-screen only)
 //   CARB g/h   current carb burn rate (smoothed)
@@ -221,12 +223,25 @@ class CarbBurnView extends WatchUi.DataField {
         var glycV = mGlycPct.format("%.0f");
         var fmaxV = mFatMaxW.format("%d");
 
-        // Build the readout set to match the field size. Very large (full-screen)
-        // layouts add total fat grams and the fat-max power; taller layouts add the
-        // glycogen readout (needs body weight).
+        // Choose orientation by the field's SHAPE, not absolute pixels, so it
+        // behaves the same on every screen resolution. A field wider than it is
+        // tall lays its three core readouts out side by side; a taller field
+        // stacks them (and shows richer sets as it gets bigger).
+        if (w > h) {
+            var hl = ["CARBS g", "CARB g/h", "CARB %"];
+            var hv = [carbV, rateV, pctV];
+            drawHorizontal(dc, fg, w, h, hl, hv, 3);
+            return;
+        }
+
+        // Vertical: pick how many rows from how much of the screen height the
+        // field occupies (again resolution independent).
+        var scrH = System.getDeviceSettings().screenHeight;
+        var frac = (scrH != null && scrH > 0) ? (h.toFloat() / scrH.toFloat()) : 1.0;
+
         var labels;
         var values;
-        if (h >= 200) {
+        if (frac >= 0.70) {
             if (mWeight > 0.0) {
                 labels = ["CARBS g", "FAT g", "CARB g/h", "CARB %", "GLYCG %", "FATMAX W"];
                 values = [carbV, fatV, rateV, pctV, glycV, fmaxV];
@@ -234,28 +249,28 @@ class CarbBurnView extends WatchUi.DataField {
                 labels = ["CARBS g", "FAT g", "CARB g/h", "CARB %", "FATMAX W"];
                 values = [carbV, fatV, rateV, pctV, fmaxV];
             }
-        } else if (h >= 130 && mWeight > 0.0) {
+        } else if (frac >= 0.38 && mWeight > 0.0) {
             labels = ["CARBS g", "CARB g/h", "CARB %", "GLYCG %"];
             values = [carbV, rateV, pctV, glycV];
         } else {
             labels = ["CARBS g", "CARB g/h", "CARB %"];
             values = [carbV, rateV, pctV];
         }
-
-        var n = labels.size();
-
-        // Small (short) fields lay the readouts out side by side; taller fields stack them.
-        if (h < 130) {
-            drawHorizontal(dc, fg, w, h, labels, values, n);
-        } else {
-            drawVertical(dc, w, h, labels, values, n);
-        }
+        drawVertical(dc, w, h, labels, values, labels.size());
     }
 
-    // Side-by-side columns, one readout per column (for small/short fields).
+    // Side-by-side columns, one readout per column (fields wider than tall).
     function drawHorizontal(dc, fg, w, h, labels, values, n) {
         var colW = w / n;
-        var numFont = (h >= 70) ? Graphics.FONT_NUMBER_MILD : Graphics.FONT_SMALL;
+        var numFont = Graphics.FONT_NUMBER_MILD;
+        if (h >= 150) { numFont = Graphics.FONT_NUMBER_MEDIUM; }
+        if (h <  60)  { numFont = Graphics.FONT_SMALL; }
+
+        // Vertically centre the label + value block.
+        var lblH = dc.getFontHeight(Graphics.FONT_XTINY);
+        var valH = dc.getFontHeight(numFont);
+        var top  = (h - (lblH + valH)) / 2;
+        if (top < 0) { top = 0; }
 
         // Faint dividers between columns.
         dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
@@ -266,26 +281,31 @@ class CarbBurnView extends WatchUi.DataField {
 
         for (var i = 0; i < n; i += 1) {
             var colCx = (i * colW) + (colW / 2);
-            dc.drawText(colCx, h * 0.10, Graphics.FONT_XTINY,
+            dc.drawText(colCx, top, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
-            dc.drawText(colCx, h * 0.40, numFont,
+            dc.drawText(colCx, top + lblH, numFont,
                         values[i], Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
-    // Stacked rows, one readout per row (for taller fields).
+    // Stacked rows, one readout per row (fields taller than wide).
     function drawVertical(dc, w, h, labels, values, n) {
         var cx = w / 2;
         var rowH = h / n;
         var numFont = Graphics.FONT_NUMBER_MILD;
-        if (rowH >= 72) { numFont = Graphics.FONT_NUMBER_MEDIUM; }
-        if (rowH <  38) { numFont = Graphics.FONT_SMALL; }
+        if (rowH >= 90) { numFont = Graphics.FONT_NUMBER_MEDIUM; }
+        if (rowH <  40) { numFont = Graphics.FONT_TINY; }
+
+        var lblH = dc.getFontHeight(Graphics.FONT_XTINY);
+        var valH = dc.getFontHeight(numFont);
+        var pad  = (rowH - (lblH + valH)) / 2;
+        if (pad < 0) { pad = 0; }
 
         for (var i = 0; i < n; i += 1) {
-            var yTop = i * rowH;
-            dc.drawText(cx, yTop + rowH * 0.08, Graphics.FONT_XTINY,
+            var yTop = (i * rowH) + pad;
+            dc.drawText(cx, yTop, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
-            dc.drawText(cx, yTop + rowH * 0.40, numFont,
+            dc.drawText(cx, yTop + lblH, numFont,
                         values[i], Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
