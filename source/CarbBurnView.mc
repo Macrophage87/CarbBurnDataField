@@ -28,13 +28,14 @@ using Toybox.Lang;
 //   b) Glycogen-store depletion %. Total body glycogen scales with body mass
 //      (~8 g/kg), so weight lets us express carbs burned as a share of stores.
 //
-// Displayed values (top to bottom, extra rows appear on taller fields):
-//   CARBS      total carbohydrate burned, grams
-//   FAT        total fat burned, grams              (very large / full-screen only)
-//   CARB/HR    current carb burn rate, grams/hour (smoothed)
-//   % CARB     session-average share of expenditure from carbohydrate
-//   GLYCOGEN   estimated % of glycogen stores used (needs body weight)
-//   FATMAX     power that maximises fat oxidation, W (very large / full-screen only)
+// Displayed readouts (small/short fields lay them out side by side; taller fields
+// stack them and reveal extra rows). The unit is shown in each label:
+//   CARBS g    total carbohydrate burned
+//   FAT g      total fat burned                     (very large / full-screen only)
+//   CARB g/h   current carb burn rate (smoothed)
+//   CARB %     session-average share of energy from carbohydrate
+//   GLYCG %    estimated glycogen stores used (needs body weight)
+//   FATMAX W   power that maximises fat oxidation   (very large / full-screen only)
 //
 class CarbBurnView extends WatchUi.DataField {
 
@@ -208,45 +209,77 @@ class CarbBurnView extends WatchUi.DataField {
         dc.clear();
         dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
 
-        var w  = dc.getWidth();
-        var h  = dc.getHeight();
-        var cx = w / 2;
+        var w = dc.getWidth();
+        var h = dc.getHeight();
 
-        // Pre-format the individual readouts.
-        var carbStr = mGramsCho.format("%.0f") + " g";
-        var fatStr  = mGramsFat.format("%.0f") + " g";
-        var rateStr = mRateDisp.format("%.0f") + " g/h";
-        var pctStr  = mPctCho.format("%.0f") + " %";
-        var glycStr = mGlycPct.format("%.0f") + " %";
-        var fmaxStr = mFatMaxW.format("%d") + " W";
+        // Numeric values only; the unit travels in the label, because the bold
+        // FONT_NUMBER_* faces used for the figures contain no letter glyphs.
+        var carbV = mGramsCho.format("%.0f");
+        var fatV  = mGramsFat.format("%.0f");
+        var rateV = mRateDisp.format("%.0f");
+        var pctV  = mPctCho.format("%.0f");
+        var glycV = mGlycPct.format("%.0f");
+        var fmaxV = mFatMaxW.format("%d");
 
-        // Build the row set to match the field size. Very large (full-screen)
+        // Build the readout set to match the field size. Very large (full-screen)
         // layouts add total fat grams and the fat-max power; taller layouts add the
         // glycogen readout (needs body weight).
         var labels;
         var values;
         if (h >= 200) {
             if (mWeight > 0.0) {
-                labels = ["CARBS", "FAT", "CARB/HR", "% CARB", "GLYCOGEN", "FATMAX"];
-                values = [carbStr, fatStr, rateStr, pctStr, glycStr, fmaxStr];
+                labels = ["CARBS g", "FAT g", "CARB g/h", "CARB %", "GLYCG %", "FATMAX W"];
+                values = [carbV, fatV, rateV, pctV, glycV, fmaxV];
             } else {
-                labels = ["CARBS", "FAT", "CARB/HR", "% CARB", "FATMAX"];
-                values = [carbStr, fatStr, rateStr, pctStr, fmaxStr];
+                labels = ["CARBS g", "FAT g", "CARB g/h", "CARB %", "FATMAX W"];
+                values = [carbV, fatV, rateV, pctV, fmaxV];
             }
         } else if (h >= 130 && mWeight > 0.0) {
-            labels = ["CARBS", "CARB/HR", "% CARB", "GLYCOGEN"];
-            values = [carbStr, rateStr, pctStr, glycStr];
+            labels = ["CARBS g", "CARB g/h", "CARB %", "GLYCG %"];
+            values = [carbV, rateV, pctV, glycV];
         } else {
-            labels = ["CARBS", "CARB/HR", "% CARB"];
-            values = [carbStr, rateStr, pctStr];
+            labels = ["CARBS g", "CARB g/h", "CARB %"];
+            values = [carbV, rateV, pctV];
         }
 
-        var n    = labels.size();
-        var rowH = h / n;
+        var n = labels.size();
 
-        var numFont = Graphics.FONT_SMALL;
-        if (rowH >= 46) { numFont = Graphics.FONT_NUMBER_MILD; }
+        // Small (short) fields lay the readouts out side by side; taller fields stack them.
+        if (h < 130) {
+            drawHorizontal(dc, fg, w, h, labels, values, n);
+        } else {
+            drawVertical(dc, w, h, labels, values, n);
+        }
+    }
+
+    // Side-by-side columns, one readout per column (for small/short fields).
+    function drawHorizontal(dc, fg, w, h, labels, values, n) {
+        var colW = w / n;
+        var numFont = (h >= 70) ? Graphics.FONT_NUMBER_MILD : Graphics.FONT_SMALL;
+
+        // Faint dividers between columns.
+        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
+        for (var d = 1; d < n; d += 1) {
+            dc.drawLine(d * colW, h * 0.18, d * colW, h * 0.82);
+        }
+        dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+
+        for (var i = 0; i < n; i += 1) {
+            var colCx = (i * colW) + (colW / 2);
+            dc.drawText(colCx, h * 0.10, Graphics.FONT_XTINY,
+                        labels[i], Graphics.TEXT_JUSTIFY_CENTER);
+            dc.drawText(colCx, h * 0.40, numFont,
+                        values[i], Graphics.TEXT_JUSTIFY_CENTER);
+        }
+    }
+
+    // Stacked rows, one readout per row (for taller fields).
+    function drawVertical(dc, w, h, labels, values, n) {
+        var cx = w / 2;
+        var rowH = h / n;
+        var numFont = Graphics.FONT_NUMBER_MILD;
         if (rowH >= 72) { numFont = Graphics.FONT_NUMBER_MEDIUM; }
+        if (rowH <  38) { numFont = Graphics.FONT_SMALL; }
 
         for (var i = 0; i < n; i += 1) {
             var yTop = i * rowH;
