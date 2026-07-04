@@ -115,3 +115,16 @@ CarbBurn_WhitePaper.pdf              technical white paper (derivation + citatio
 carb_curve.png                       Figure 1 — energy share vs power
 grams_curve.png                      Figure 2 — grams/hour vs power
 ```
+
+## License
+
+Copyright © 2026 Stephen Cieply ([@Macrophage87](https://github.com/Macrophage87)).
+
+This project — source code, resources, the technical white paper, and the figures —
+is licensed under the **Creative Commons Attribution 4.0 International (CC BY 4.0)**
+license. You are free to share and adapt the material for any purpose, including
+commercially, provided you give appropriate credit. See [LICENSE](LICENSE) or
+<https://creativecommons.org/licenses/by/4.0/> for the full terms.
+
+**Suggested attribution:** *"Carb Burn Data Field by Stephen Cieply, licensed under
+CC BY 4.0."*

@@ -1,0 +1,9 @@
+# Normalize line endings for text files (stored as LF in the repo)
+* text=auto
+
+# Treat these as binary (no line-ending conversion, no diff)
+*.png binary
+*.pdf binary
+*.prg binary
+*.iq  binary
+*.der binary
