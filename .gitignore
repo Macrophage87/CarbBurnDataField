@@ -1,8 +1,17 @@
 # Connect IQ build artifacts
 bin/
+gen/
+external-mir/
+internal-mir/
 *.prg
 *.iq
 *.debug.xml
+*.mir
+*.mcgen
+*.mbc
+
+# VS Code Monkey C per-project settings
+*-settings.json
 
 # Developer key (never commit private keys)
 *.der
