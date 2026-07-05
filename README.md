@@ -14,6 +14,13 @@ The layout adapts to the field's shape:
   **rolling / lap-average / overall-average**; plus **carbs spent**, **glycogen left**
   (g and %), and the **fat-max** and **50% crossover** wattages.
 
+### FIT recording
+
+Cumulative **carbohydrate (g)** and **fat (g)** are written into the activity's
+`.FIT` file — as per-record fields (a graphable time series) and as session totals
+— so they're available in Garmin Connect and analysis tools after the ride. This
+uses the `FitContributor` permission.
+
 ## How it works
 
 1. **Power → metabolic energy.** `metabolic_watts = power / gross_efficiency`.

@@ -5,6 +5,7 @@ using Toybox.Application;
 using Toybox.Math;
 using Toybox.Lang;
 using Toybox.System;
+using Toybox.FitContributor;
 
 //
 // Carb Burn data field
@@ -25,6 +26,11 @@ using Toybox.System;
 //     rolling / lap-average / overall-average; plus carbs spent, glycogen left
 //     (g and %), and the fat-max and 50% crossover wattages.
 //   - In-between fields       -> a short vertical stack.
+//
+// FIT recording
+//   Cumulative carbohydrate and fat grams are written to the .FIT file both as
+//   per-record fields (a graphable time series) and as session totals. Requires
+//   the FitContributor permission (declared in the manifest).
 //
 class CarbBurnView extends WatchUi.DataField {
 
@@ -58,6 +64,12 @@ class CarbBurnView extends WatchUi.DataField {
 
     private var mLastTimerMs;
 
+    // ---- FIT file contributor fields ----
+    private var mFitCarbRec;   // per-record cumulative carbs (g)
+    private var mFitFatRec;    // per-record cumulative fat (g)
+    private var mFitCarbSes;   // session total carbs (g)
+    private var mFitFatSes;    // session total fat (g)
+
     // ---- Display values (reconciled where relevant) ----
     private var mGramsCho;   // total carb grams
     private var mGramsFat;   // total fat grams
@@ -77,6 +89,41 @@ class CarbBurnView extends WatchUi.DataField {
         DataField.initialize();
         resetSession();
         loadSettings();
+        createFitFields();
+    }
+
+    // Register the custom FIT fields: per-record (time series) and per-session
+    // (activity total) carbohydrate and fat, in grams.
+    function createFitFields() {
+        mFitCarbRec = createField("carbohydrates", 0, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g"});
+        mFitFatRec  = createField("fat", 1, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g"});
+        mFitCarbSes = createField("total_carbohydrates", 2, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "g"});
+        mFitFatSes  = createField("total_fat", 3, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "g"});
+        mFitCarbRec.setData(0);
+        mFitFatRec.setData(0);
+        mFitCarbSes.setData(0);
+        mFitFatSes.setData(0);
+    }
+
+    // Push the current cumulative grams to the FIT fields (UINT16, clamped).
+    function setFitData() {
+        var c = clampU16(mGramsCho);
+        var f = clampU16(mGramsFat);
+        if (mFitCarbRec != null) { mFitCarbRec.setData(c); }
+        if (mFitFatRec  != null) { mFitFatRec.setData(f); }
+        if (mFitCarbSes != null) { mFitCarbSes.setData(c); }
+        if (mFitFatSes  != null) { mFitFatSes.setData(f); }
+    }
+
+    function clampU16(x) {
+        var v = (x + 0.5).toNumber();
+        if (v < 0)     { v = 0; }
+        if (v > 65535) { v = 65535; }
+        return v;
     }
 
     // Zero every accumulator and display value (fresh start / timer reset).
@@ -231,6 +278,8 @@ class CarbBurnView extends WatchUi.DataField {
         mGlycPct  = (mWeight > 0.0)
                     ? (mGramsCho / (mWeight * GLYCOGEN_G_PER_KG) * 100.0)
                     : 0.0;
+
+        setFitData();
     }
 
     // Rescale magnitude to Garmin's calorie total when available (else 1.0).
