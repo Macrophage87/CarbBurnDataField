@@ -27,6 +27,22 @@ power, so the numbers double as a pacing cue:
 - **orange** — 50%-carb crossover up to the 90%-carb power
 - **red** — above the 90%-carb power (carbohydrate almost entirely dominant)
 
+All boundaries are derived from your own thresholds (fat-max, the 50%-carb
+crossover, and the 90%-carb power), so they scale per rider. For the generic
+sample rider (FTP 250 W, LT1 175 W) they fall at roughly:
+
+| Zone | Power | Colour |
+|---|---|---|
+| Well below fat-max | < 137 W | grey |
+| Around fat-max | 137–167 W | blue |
+| Fat-max → 50%-carb | 167–195 W | green |
+| 50%-carb → 90%-carb | 195–265 W | orange |
+| Above 90%-carb | > 265 W | red |
+
+Because the 90%-carb power usually sits above FTP, **red only appears during hard
+efforts above threshold.** The smoothed power (not the instantaneous value) drives
+the colour, so it transitions cleanly rather than flickering on surges.
+
 ### FIT recording
 
 Cumulative **carbohydrate (g)** and **fat (g)** are written into the activity's
