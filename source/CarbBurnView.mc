@@ -45,6 +45,10 @@ class CarbBurnView extends WatchUi.DataField {
     private var mFatMaxW;   // power (W) that maximises fat oxidation rate
     private var mCarbIntake;// assumed carb intake during the ride, g/hr
     private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
+    private var mPowerRoll; // smoothed power (W) for zone colouring
+    private var mZBlueLo;   // fat-max * 0.90 (grey below)
+    private var mZBlueHi;   // fat-max * 1.10 (blue band around fat-max)
+    private var mZRed;      // 0.90 * FTP (red above)
 
     // ---- Session (overall) accumulators ----
     private var mModelKcal;      // total metabolic kcal (power / GE)
@@ -139,6 +143,7 @@ class CarbBurnView extends WatchUi.DataField {
         mCarbRate      = 0.0;
         mFatRate       = 0.0;
         mCarbPctRoll   = 0.0;
+        mPowerRoll     = 0.0;
         mLastTimerMs   = 0;
         mGramsCho      = 0.0;
         mGramsFat      = 0.0;
@@ -221,6 +226,22 @@ class CarbBurnView extends WatchUi.DataField {
         }
         if (eqP == 0) { eqP = 600; }   // intake exceeds burn even at 600 W
         mEquilW = eqP;
+
+        // Colour-zone thresholds (watts) for the rolling carb readouts.
+        mZBlueLo = mFatMaxW * 0.90;   // grey below this
+        mZBlueHi = mFatMaxW * 1.10;   // blue band around fat-max
+        mZRed    = 0.90 * mFtp;       // red above 90% FTP
+    }
+
+    // Colour for the rolling carb readouts from the (smoothed) power zone:
+    // grey well below fat-max, blue around fat-max, green up to the crossover,
+    // orange up to 90% FTP, red above.
+    function zoneColor(power, greyColor) {
+        if (power < mZBlueLo) { return greyColor; }
+        if (power < mZBlueHi) { return Graphics.COLOR_BLUE; }
+        if (power < mP50)     { return Graphics.COLOR_GREEN; }
+        if (power < mZRed)    { return Graphics.COLOR_ORANGE; }
+        return Graphics.COLOR_RED;
     }
 
     // Modelled carbohydrate oxidation rate at a given power, g/hr.
@@ -277,11 +298,13 @@ class CarbBurnView extends WatchUi.DataField {
                 mCarbRate    = mCarbRate    + RATE_ALPHA * (instCarb - mCarbRate);
                 mFatRate     = mFatRate     + RATE_ALPHA * (instFat  - mFatRate);
                 mCarbPctRoll = mCarbPctRoll + RATE_ALPHA * (instPct  - mCarbPctRoll);
+                mPowerRoll   = mPowerRoll   + RATE_ALPHA * (p        - mPowerRoll);
             } else {
-                // Coasting: decay the rolling rates toward zero; hold the % (a
-                // ratio is undefined with no substrate flux).
-                mCarbRate = mCarbRate + RATE_ALPHA * (0.0 - mCarbRate);
-                mFatRate  = mFatRate  + RATE_ALPHA * (0.0 - mFatRate);
+                // Coasting: decay the rolling rates and power toward zero; hold the
+                // % (a ratio is undefined with no substrate flux).
+                mCarbRate  = mCarbRate  + RATE_ALPHA * (0.0 - mCarbRate);
+                mFatRate   = mFatRate   + RATE_ALPHA * (0.0 - mFatRate);
+                mPowerRoll = mPowerRoll + RATE_ALPHA * (0.0 - mPowerRoll);
             }
         }
 
@@ -313,6 +336,8 @@ class CarbBurnView extends WatchUi.DataField {
     function onUpdate(dc) {
         var bg = getBackgroundColor();
         var fg = (bg == Graphics.COLOR_BLACK) ? Graphics.COLOR_WHITE : Graphics.COLOR_BLACK;
+        var grey = (bg == Graphics.COLOR_BLACK) ? Graphics.COLOR_LT_GRAY : Graphics.COLOR_DK_GRAY;
+        var zc = zoneColor(mPowerRoll, grey);
 
         dc.setColor(bg, bg);
         dc.clear();
@@ -322,13 +347,13 @@ class CarbBurnView extends WatchUi.DataField {
         var h = dc.getHeight();
 
         // Field WIDER than tall: three core readouts side by side. Carb g/h and
-        // carb % are both rolling so they rise and fall together.
+        // carb % are rolling and coloured by the current power zone.
         if (w > h) {
             var hl = ["CARBS g", "CARB g/h", "CARB %"];
             var hv = [ mGramsCho.format("%.0f"),
                        mRateDisp.format("%.0f"),
                        mCarbPctRoll.format("%.0f") ];
-            drawHorizontal(dc, fg, w, h, hl, hv, 3);
+            drawHorizontal(dc, fg, w, h, hl, hv, [fg, zc, zc], 3);
             return;
         }
 
@@ -337,27 +362,32 @@ class CarbBurnView extends WatchUi.DataField {
 
         // Full-screen field with room for columns: the grid.
         if (frac >= 0.70 && w >= 200) {
-            drawGrid(dc, fg, w, h);
+            drawGrid(dc, fg, zc, w, h);
             return;
         }
 
-        // Otherwise a short vertical stack (carb % is the rolling value).
+        // Otherwise a short vertical stack (carb g/h and carb % are rolling +
+        // colour-coded).
         var labels;
         var values;
+        var colors;
         if (frac >= 0.38 && mWeight > 0.0) {
             labels = ["CARBS g", "CARB g/h", "CARB %", "GLYCG %"];
             values = [ mGramsCho.format("%.0f"), mRateDisp.format("%.0f"),
                        mCarbPctRoll.format("%.0f"), mGlycPct.format("%.0f") ];
+            colors = [fg, zc, zc, fg];
         } else {
             labels = ["CARBS g", "CARB g/h", "CARB %"];
             values = [ mGramsCho.format("%.0f"), mRateDisp.format("%.0f"),
                        mCarbPctRoll.format("%.0f") ];
+            colors = [fg, zc, zc];
         }
-        drawVertical(dc, w, h, labels, values, labels.size());
+        drawVertical(dc, fg, w, h, labels, values, colors, labels.size());
     }
 
     // Side-by-side columns, one readout per column (fields wider than tall).
-    function drawHorizontal(dc, fg, w, h, labels, values, n) {
+    // colors[i] is the colour for value i (labels stay in fg).
+    function drawHorizontal(dc, fg, w, h, labels, values, colors, n) {
         var colW = w / n;
         var numFont = Graphics.FONT_NUMBER_MILD;
         if (h >= 150) { numFont = Graphics.FONT_NUMBER_MEDIUM; }
@@ -372,19 +402,20 @@ class CarbBurnView extends WatchUi.DataField {
         for (var d = 1; d < n; d += 1) {
             dc.drawLine(d * colW, h * 0.18, d * colW, h * 0.82);
         }
-        dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
 
         for (var i = 0; i < n; i += 1) {
             var colCx = (i * colW) + (colW / 2);
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             dc.drawText(colCx, top, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
+            dc.setColor(colors[i], Graphics.COLOR_TRANSPARENT);
             dc.drawText(colCx, top + lblH, numFont,
                         values[i], Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
     // Stacked rows, one readout per row (fields taller than wide).
-    function drawVertical(dc, w, h, labels, values, n) {
+    function drawVertical(dc, fg, w, h, labels, values, colors, n) {
         var cx = w / 2;
         var rowH = h / n;
         var numFont = Graphics.FONT_NUMBER_MILD;
@@ -398,15 +429,18 @@ class CarbBurnView extends WatchUi.DataField {
 
         for (var i = 0; i < n; i += 1) {
             var yTop = (i * rowH) + pad;
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, yTop, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
+            dc.setColor(colors[i], Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, yTop + lblH, numFont,
                         values[i], Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
-    // Full-screen grid: 5 rows x (label + 3 cells).
-    function drawGrid(dc, fg, w, h) {
+    // Full-screen grid: 5 rows x (label + 3 cells). The rolling carb g/h and
+    // carb % values (roll column of rows 0 and 2) are coloured by power zone (zc).
+    function drawGrid(dc, fg, zc, w, h) {
         var recon = reconFactor();
         var ovH  = mTotalSec / 3600.0;
         var lapH = mLapSec / 3600.0;
@@ -466,14 +500,19 @@ class CarbBurnView extends WatchUi.DataField {
 
         for (var row = 0; row < nRows; row += 1) {
             var rowTop = row * rowH;
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             dc.drawText(6, rowTop + (rowH - rowLH) / 2, fRow,
                         rowNames[row], Graphics.TEXT_JUSTIFY_LEFT);
             var blockTop = rowTop + (rowH - (subH + valH)) / 2;
             for (var c = 0; c < 3; c += 1) {
                 if (vals[row][c] == null) { continue; }
                 var cx = leftW + c * cellW + cellW / 2;
+                dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
                 dc.drawText(cx, blockTop, fSub, subs[row][c],
                             Graphics.TEXT_JUSTIFY_CENTER);
+                // roll cells of CARB/h (row 0) and CARB% (row 2) get the zone colour
+                var vcol = ((c == 0) && ((row == 0) || (row == 2))) ? zc : fg;
+                dc.setColor(vcol, Graphics.COLOR_TRANSPARENT);
                 dc.drawText(cx, blockTop + subH, fVal, vals[row][c],
                             Graphics.TEXT_JUSTIFY_CENTER);
             }

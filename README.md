@@ -16,6 +16,17 @@ The layout adapts to the field's shape:
   **fueling-equilibrium** power (where carb burn matches your carb intake — below it
   you spare glycogen, above it you deplete).
 
+### Colour zones
+
+The rolling **carb g/h** and **carb %** are colour-coded by the current (smoothed)
+power, so the numbers double as a pacing cue:
+
+- **grey** — well below fat-max (< 90% of fat-max)
+- **blue** — around fat-max (±10%)
+- **green** — fat-max up to the 50% crossover
+- **orange** — crossover up to 90% of FTP
+- **red** — above 90% of FTP
+
 ### FIT recording
 
 Cumulative **carbohydrate (g)** and **fat (g)** are written into the activity's
