@@ -43,6 +43,8 @@ class CarbBurnView extends WatchUi.DataField {
     private var mK;         // steepness
     private var mP50;       // power at 50% CHO (crossover watts)
     private var mFatMaxW;   // power (W) that maximises fat oxidation rate
+    private var mCarbIntake;// assumed carb intake during the ride, g/hr
+    private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
 
     // ---- Session (overall) accumulators ----
     private var mModelKcal;      // total metabolic kcal (power / GE)
@@ -179,6 +181,8 @@ class CarbBurnView extends WatchUi.DataField {
         var lt1 = getProp("lt1", 0);
         var ge  = getProp("grossEfficiency", 21);
         var wt  = getProp("weight", 75);
+        var ci  = getProp("carbIntake", 60);
+        mCarbIntake = (ci != null && ci >= 0) ? ci.toFloat() : 60.0;
 
         mFtp    = (ftp != null && ftp > 0) ? ftp.toFloat() : 250.0;
         mGe     = (ge  != null && ge >= 5) ? ge.toFloat() / 100.0 : 0.21;
@@ -207,6 +211,22 @@ class CarbBurnView extends WatchUi.DataField {
             if (score > bestScore) { bestScore = score; bestP = pw; }
         }
         mFatMaxW = bestP;
+
+        // Fueling equilibrium: the power at which modelled carb oxidation equals the
+        // assumed intake rate (carb burn rises monotonically with power, so the first
+        // crossing is the answer). Below it you spare glycogen; above it you deplete.
+        var eqP = 0;
+        for (var pw2 = 30; pw2 <= 600; pw2 += 2) {
+            if (carbRateAt(pw2) >= mCarbIntake) { eqP = pw2; break; }
+        }
+        if (eqP == 0) { eqP = 600; }   // intake exceeds burn even at 600 W
+        mEquilW = eqP;
+    }
+
+    // Modelled carbohydrate oxidation rate at a given power, g/hr.
+    function carbRateAt(power) {
+        var metabolicW = power / mGe;
+        return choFraction(power) * metabolicW / J_PER_KCAL * 3600.0 / KCAL_PER_G;
     }
 
     function onSettingsChanged() {
@@ -427,20 +447,21 @@ class CarbBurnView extends WatchUi.DataField {
         dc.drawLine(leftW + 2 * cellW, 0, leftW + 2 * cellW, h);
         dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
 
+        var eqSub = mCarbIntake.format("%.0f") + "g eq";
         var rowNames = ["CARB/h", "FAT/h", "CARB%", "STORE", "PWR"];
         var subs = [
             ["roll", "lap", "avg"],
             ["roll", "lap", "avg"],
             ["roll", "lap", "avg"],
             ["carb g", "gly g", "gly %"],
-            ["fatmax", "xover", null]
+            ["fatmax", "xover", eqSub]
         ];
         var vals = [
             [cRoll.format("%.0f"), cLap.format("%.0f"), cAvg.format("%.0f")],
             [fRoll.format("%.0f"), fLap.format("%.0f"), fAvg.format("%.0f")],
             [mCarbPctRoll.format("%.0f"), pLap.format("%.0f"), mPctCho.format("%.0f")],
             [mGramsCho.format("%.0f"), glyLeftStr, glyPctStr],
-            [mFatMaxW.format("%d"), mP50.format("%.0f"), null]
+            [mFatMaxW.format("%d"), mP50.format("%.0f"), mEquilW.format("%d")]
         ];
 
         for (var row = 0; row < nRows; row += 1) {

@@ -12,7 +12,9 @@ The layout adapts to the field's shape:
   (glycogen used) when body weight is set.
 - **Full screen** — a grid showing, for **carb g/h**, **fat g/h** and **carb %**, the
   **rolling / lap-average / overall-average**; plus **carbs spent**, **glycogen left**
-  (g and %), and the **fat-max** and **50% crossover** wattages.
+  (g and %), and three key wattages: **fat-max**, the **50% crossover**, and the
+  **fueling-equilibrium** power (where carb burn matches your carb intake — below it
+  you spare glycogen, above it you deplete).
 
 ### FIT recording
 
@@ -80,6 +82,7 @@ Set weight to `0` to disable the glycogen readout.
 | LT1 / aerobic threshold (watts) | 0 = not tested (estimated from FTP) | 0 |
 | Gross efficiency (%) | Trained cyclists ~19–24% | 21 |
 | Body weight (kg) | Match your Garmin profile; 0 = disable glycogen readout | 75 |
+| Carb intake (g/h) | Assumed carbohydrate intake — sets the fueling-equilibrium power | 60 |
 
 ## Build / install
 
