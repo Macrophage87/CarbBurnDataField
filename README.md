@@ -23,9 +23,9 @@ power, so the numbers double as a pacing cue:
 
 - **grey** — well below fat-max (< 90% of fat-max)
 - **blue** — around fat-max (±10%)
-- **green** — fat-max up to the 50% crossover
-- **orange** — crossover up to 90% of FTP
-- **red** — above 90% of FTP
+- **green** — fat-max up to the 50%-carb crossover
+- **orange** — 50%-carb crossover up to the 90%-carb power
+- **red** — above the 90%-carb power (carbohydrate almost entirely dominant)
 
 ### FIT recording
 
