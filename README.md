@@ -3,17 +3,16 @@
 A cycling data field that estimates **carbohydrate (CHO) oxidation** live from power,
 using your **FTP** and (optionally) **LT1 / aerobic threshold**.
 
-It shows several values in one field (extra rows appear automatically on taller
-field slots):
+The layout adapts to the field's shape:
 
-- **CARBS** — total carbohydrate burned (grams, cumulative)
-- **CARB/HR** — current carb burn rate (grams/hour, smoothed)
-- **% CARB** — session-average share of expenditure from carbohydrate
-- **GLYCOGEN** — estimated % of glycogen stores used (needs body weight; shown
-  only on taller layouts)
-- **FAT** — total fat burned (grams, cumulative; very large / full-screen layouts)
-- **FATMAX** — the power (W) that maximises fat oxidation for your thresholds — a
-  fat-burning target wattage, computed from the model (very large / full-screen layouts)
+- **Wide, short field** — the three core readouts side by side: **CARBS g** (total),
+  **CARB g/h** and **CARB %**. The rate and the % are both *rolling* (smoothed on the
+  same interval), so they rise and fall together.
+- **In-between field** — a short vertical stack of the same values, plus **GLYCG %**
+  (glycogen used) when body weight is set.
+- **Full screen** — a grid showing, for **carb g/h**, **fat g/h** and **carb %**, the
+  **rolling / lap-average / overall-average**; plus **carbs spent**, **glycogen left**
+  (g and %), and the **fat-max** and **50% crossover** wattages.
 
 ## How it works
 
