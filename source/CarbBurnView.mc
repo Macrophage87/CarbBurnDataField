@@ -5,65 +5,82 @@ using Toybox.Application;
 using Toybox.Math;
 using Toybox.Lang;
 using Toybox.System;
+using Toybox.FitContributor;
 
 //
 // Carb Burn data field
 // ---------------------
-// Estimates carbohydrate (CHO) oxidation from cycling power and the athlete's
-// LT1 (aerobic threshold) and FTP.
+// Estimates carbohydrate (CHO) and fat oxidation from cycling power and the
+// athlete's LT1 (aerobic threshold) and FTP.
 //
 // Model
 // 1) Power -> metabolic energy:  metabolic_watts = power / grossEfficiency.
 // 2) %CHO from power: a logistic "crossover" curve anchored to the thresholds,
 //    ~35% CHO at LT1 and ~85% CHO at FTP.
-// 3) Grams CHO = cumulative CHO kcal / 4.0 kcal per gram.
+// 3) Grams CHO = cumulative CHO kcal / 4.0 kcal/g; grams fat / 9.0 kcal/g.
 //
-// Body weight
-// -----------
-// The power-based carb model does NOT need body weight. Weight is used for two
-// secondary things:
-//   a) Garmin calorie cross-check. Garmin's own cumulative calorie figure
-//      (Activity.Info.calories) is computed using the rider's weight. When it is
-//      available we rescale our carb magnitude to agree with it (the substrate
-//      SPLIT stays from the power model; only the total energy is reconciled).
-//   b) Glycogen-store depletion %. Total body glycogen scales with body mass
-//      (~8 g/kg), so weight lets us express carbs burned as a share of stores.
+// Layout (chosen by field shape, resolution independent):
+//   - Field WIDER than tall  -> 3 core readouts side by side (carbs g, carb g/h,
+//     carb %). The carb g/h and carb % are BOTH rolling (same EMA interval).
+//   - Full-screen field      -> a grid: for carb g/h, fat g/h and carb % it shows
+//     rolling / lap-average / overall-average; plus carbs spent, glycogen left
+//     (g and %), and the fat-max and 50% crossover wattages.
+//   - In-between fields       -> a short vertical stack.
 //
-// Displayed readouts. Layout is chosen by field shape (resolution independent):
-// a field wider than tall shows the 3 core readouts side by side; a taller field
-// stacks them and reveals extra rows as it grows. The unit is shown in each label:
-//   CARBS g    total carbohydrate burned
-//   FAT g      total fat burned                     (very large / full-screen only)
-//   CARB g/h   current carb burn rate (smoothed)
-//   CARB %     session-average share of energy from carbohydrate
-//   GLYCG %    estimated glycogen stores used (needs body weight)
-//   FATMAX W   power that maximises fat oxidation   (very large / full-screen only)
+// FIT recording
+//   Cumulative carbohydrate and fat grams are written to the .FIT file both as
+//   per-record fields (a graphable time series) and as session totals. Requires
+//   the FitContributor permission (declared in the manifest).
 //
 class CarbBurnView extends WatchUi.DataField {
 
     // ---- User settings ----
     private var mFtp;       // watts
     private var mGe;        // gross efficiency fraction (e.g. 0.21)
-    private var mWeight;    // kg (0 => glycogen readout disabled)
+    private var mWeight;    // kg (0 => glycogen readouts disabled)
 
     // ---- Derived logistic constants ----
     private var mK;         // steepness
-    private var mP50;       // power at 50% CHO (crossover)
+    private var mP50;       // power at 50% CHO (crossover watts)
     private var mFatMaxW;   // power (W) that maximises fat oxidation rate
+    private var mCarbIntake;// assumed carb intake during the ride, g/hr
+    private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
+    private var mPowerRoll; // smoothed power (W) for zone colouring
+    private var mZBlueLo;   // fat-max * 0.90 (grey below)
+    private var mZBlueHi;   // fat-max * 1.10 (blue band around fat-max)
+    private var mZRed;      // power where carb fraction hits 90% (red above)
 
-    // ---- Session accumulators (power model) ----
+    // ---- Session (overall) accumulators ----
     private var mModelKcal;      // total metabolic kcal (power / GE)
     private var mModelCarbKcal;  // carb kcal
     private var mModelFatKcal;   // fat kcal
     private var mGarminKcal;     // Garmin cumulative calories, for cross-check
-    private var mCarbRate;       // smoothed instantaneous carb rate, g/hr (model)
+    private var mTotalSec;       // total timer seconds (moving)
+
+    // ---- Lap accumulators (reset on lap) ----
+    private var mLapKcal;
+    private var mLapCarbKcal;
+    private var mLapFatKcal;
+    private var mLapSec;
+
+    // ---- Rolling (EMA) values ----
+    private var mCarbRate;   // carb g/hr, smoothed
+    private var mFatRate;    // fat g/hr, smoothed
+    private var mCarbPctRoll;// carb % of energy, smoothed
+
     private var mLastTimerMs;
 
-    // ---- Display values ----
-    private var mGramsCho;   // total carb grams (reconciled)
-    private var mGramsFat;   // total fat grams (reconciled)
-    private var mRateDisp;   // g/hr (reconciled)
-    private var mPctCho;     // % from carb
+    // ---- FIT file contributor fields ----
+    private var mFitCarbRec;   // per-record cumulative carbs (g)
+    private var mFitFatRec;    // per-record cumulative fat (g)
+    private var mFitCarbSes;   // session total carbs (g)
+    private var mFitFatSes;    // session total fat (g)
+
+    // ---- Display values (reconciled where relevant) ----
+    private var mGramsCho;   // total carb grams
+    private var mGramsFat;   // total fat grams
+    private var mRateDisp;   // carb g/hr rolling (reconciled)
+    private var mPctCho;     // overall carb %
     private var mGlycPct;    // % of glycogen stores used
 
     // ---- Constants ----
@@ -72,23 +89,83 @@ class CarbBurnView extends WatchUi.DataField {
     private const KCAL_PER_G       = 4.0;    // carbohydrate energy yield
     private const KCAL_PER_G_FAT   = 9.0;    // fat energy yield
     private const GLYCOGEN_G_PER_KG = 8.0;   // approx total body glycogen store
-    private const RATE_ALPHA       = 0.10;   // EMA smoothing for g/hr
+    private const RATE_ALPHA       = 0.10;   // EMA smoothing (shared by rate + %)
 
     function initialize() {
         DataField.initialize();
+        resetSession();
+        loadSettings();
+        createFitFields();
+    }
+
+    // Register the custom FIT fields: per-record (time series) and per-session
+    // (activity total) carbohydrate and fat, in grams.
+    function createFitFields() {
+        mFitCarbRec = createField("carbohydrates", 0, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g"});
+        mFitFatRec  = createField("fat", 1, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g"});
+        mFitCarbSes = createField("total_carbohydrates", 2, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "g"});
+        mFitFatSes  = createField("total_fat", 3, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "g"});
+        mFitCarbRec.setData(0);
+        mFitFatRec.setData(0);
+        mFitCarbSes.setData(0);
+        mFitFatSes.setData(0);
+    }
+
+    // Push the current cumulative grams to the FIT fields (UINT16, clamped).
+    function setFitData() {
+        var c = clampU16(mGramsCho);
+        var f = clampU16(mGramsFat);
+        if (mFitCarbRec != null) { mFitCarbRec.setData(c); }
+        if (mFitFatRec  != null) { mFitFatRec.setData(f); }
+        if (mFitCarbSes != null) { mFitCarbSes.setData(c); }
+        if (mFitFatSes  != null) { mFitFatSes.setData(f); }
+    }
+
+    function clampU16(x) {
+        var v = (x + 0.5).toNumber();
+        if (v < 0)     { v = 0; }
+        if (v > 65535) { v = 65535; }
+        return v;
+    }
+
+    // Zero every accumulator and display value (fresh start / timer reset).
+    function resetSession() {
         mModelKcal     = 0.0;
         mModelCarbKcal = 0.0;
         mModelFatKcal  = 0.0;
         mGarminKcal    = 0.0;
+        mTotalSec      = 0.0;
+        resetLap();
         mCarbRate      = 0.0;
+        mFatRate       = 0.0;
+        mCarbPctRoll   = 0.0;
+        mPowerRoll     = 0.0;
         mLastTimerMs   = 0;
         mGramsCho      = 0.0;
         mGramsFat      = 0.0;
         mRateDisp      = 0.0;
         mPctCho        = 0.0;
         mGlycPct       = 0.0;
-        mFatMaxW       = 0;
-        loadSettings();
+    }
+
+    function resetLap() {
+        mLapKcal     = 0.0;
+        mLapCarbKcal = 0.0;
+        mLapFatKcal  = 0.0;
+        mLapSec      = 0.0;
+    }
+
+    // Framework hooks for lap / reset.
+    function onTimerLap() {
+        resetLap();
+    }
+
+    function onTimerReset() {
+        resetSession();
     }
 
     function getProp(key, dflt) {
@@ -109,6 +186,8 @@ class CarbBurnView extends WatchUi.DataField {
         var lt1 = getProp("lt1", 0);
         var ge  = getProp("grossEfficiency", 21);
         var wt  = getProp("weight", 75);
+        var ci  = getProp("carbIntake", 60);
+        mCarbIntake = (ci != null && ci >= 0) ? ci.toFloat() : 60.0;
 
         mFtp    = (ftp != null && ftp > 0) ? ftp.toFloat() : 250.0;
         mGe     = (ge  != null && ge >= 5) ? ge.toFloat() / 100.0 : 0.21;
@@ -127,9 +206,7 @@ class CarbBurnView extends WatchUi.DataField {
         mK   = 2.3536 / span;
         mP50 = lt1f + 0.2631 * span;
 
-        // Fat-max power: the wattage that maximises fat oxidation rate. Fat g/hr is
-        // proportional to power * fatFraction = power * (1 - choFraction); there is no
-        // closed form, so scan for the peak (cheap, only runs on settings load).
+        // Fat-max power (peak of power * fatFraction); no closed form -> scan.
         var pMax = (mFtp * 1.3).toNumber();
         if (pMax < 60) { pMax = 60; }
         var bestP = 0;
@@ -139,6 +216,40 @@ class CarbBurnView extends WatchUi.DataField {
             if (score > bestScore) { bestScore = score; bestP = pw; }
         }
         mFatMaxW = bestP;
+
+        // Fueling equilibrium: the power at which modelled carb oxidation equals the
+        // assumed intake rate (carb burn rises monotonically with power, so the first
+        // crossing is the answer). Below it you spare glycogen; above it you deplete.
+        var eqP = 0;
+        for (var pw2 = 30; pw2 <= 600; pw2 += 2) {
+            if (carbRateAt(pw2) >= mCarbIntake) { eqP = pw2; break; }
+        }
+        if (eqP == 0) { eqP = 600; }   // intake exceeds burn even at 600 W
+        mEquilW = eqP;
+
+        // Colour-zone thresholds (watts) for the rolling carb readouts.
+        mZBlueLo = mFatMaxW * 0.90;   // grey below this
+        mZBlueHi = mFatMaxW * 1.10;   // blue band around fat-max
+        // Red once the carb fraction exceeds 90%: choFraction(P)=0.90 solves to
+        // P = P50 + logit(0.90)/k, with logit(0.90) = ln(9) = 2.19722.
+        mZRed    = mP50 + 2.19722 / mK;
+    }
+
+    // Colour for the rolling carb readouts from the (smoothed) power zone:
+    // grey well below fat-max, blue around fat-max, green up to the 50% crossover,
+    // orange up to the 90%-carb power, red above.
+    function zoneColor(power, greyColor) {
+        if (power < mZBlueLo) { return greyColor; }
+        if (power < mZBlueHi) { return Graphics.COLOR_BLUE; }
+        if (power < mP50)     { return Graphics.COLOR_GREEN; }
+        if (power < mZRed)    { return Graphics.COLOR_ORANGE; }
+        return Graphics.COLOR_RED;
+    }
+
+    // Modelled carbohydrate oxidation rate at a given power, g/hr.
+    function carbRateAt(power) {
+        var metabolicW = power / mGe;
+        return choFraction(power) * metabolicW / J_PER_KCAL * 3600.0 / KCAL_PER_G;
     }
 
     function onSettingsChanged() {
@@ -164,6 +275,9 @@ class CarbBurnView extends WatchUi.DataField {
         }
 
         if (dt > 0.0) {
+            mTotalSec += dt;
+            mLapSec   += dt;
+
             if (info != null && info.currentPower != null && info.currentPower > 0) {
                 var p          = info.currentPower.toFloat();
                 var metabolicW = p / mGe;
@@ -174,12 +288,25 @@ class CarbBurnView extends WatchUi.DataField {
                 mModelCarbKcal += kcal * frac;
                 mModelFatKcal  += kcal * (1.0 - frac);
 
-                // instantaneous carb rate in g/hr, then EMA-smoothed
-                var instRate = frac * metabolicW / J_PER_KCAL * 3600.0 / KCAL_PER_G;
-                mCarbRate = mCarbRate + RATE_ALPHA * (instRate - mCarbRate);
+                mLapKcal     += kcal;
+                mLapCarbKcal += kcal * frac;
+                mLapFatKcal  += kcal * (1.0 - frac);
+
+                // Rolling rates (g/hr) and carb %, all on the same EMA interval.
+                var kcalPerHr  = metabolicW / J_PER_KCAL * 3600.0;
+                var instCarb   = frac * kcalPerHr / KCAL_PER_G;
+                var instFat    = (1.0 - frac) * kcalPerHr / KCAL_PER_G_FAT;
+                var instPct    = frac * 100.0;
+                mCarbRate    = mCarbRate    + RATE_ALPHA * (instCarb - mCarbRate);
+                mFatRate     = mFatRate     + RATE_ALPHA * (instFat  - mFatRate);
+                mCarbPctRoll = mCarbPctRoll + RATE_ALPHA * (instPct  - mCarbPctRoll);
+                mPowerRoll   = mPowerRoll   + RATE_ALPHA * (p        - mPowerRoll);
             } else {
-                // coasting: decay the displayed rate toward zero
-                mCarbRate = mCarbRate + RATE_ALPHA * (0.0 - mCarbRate);
+                // Coasting: decay the rolling rates and power toward zero; hold the
+                // % (a ratio is undefined with no substrate flux).
+                mCarbRate  = mCarbRate  + RATE_ALPHA * (0.0 - mCarbRate);
+                mFatRate   = mFatRate   + RATE_ALPHA * (0.0 - mFatRate);
+                mPowerRoll = mPowerRoll + RATE_ALPHA * (0.0 - mPowerRoll);
             }
         }
 
@@ -188,12 +315,7 @@ class CarbBurnView extends WatchUi.DataField {
             mGarminKcal = info.calories.toFloat();
         }
 
-        // Reconcile magnitude to Garmin's calorie total when available.
-        var recon = 1.0;
-        if (mGarminKcal > 0.0 && mModelKcal > 0.0) {
-            recon = mGarminKcal / mModelKcal;
-        }
-
+        var recon = reconFactor();
         mGramsCho = mModelCarbKcal * recon / KCAL_PER_G;
         mGramsFat = mModelFatKcal * recon / KCAL_PER_G_FAT;
         mRateDisp = mCarbRate * recon;
@@ -201,11 +323,23 @@ class CarbBurnView extends WatchUi.DataField {
         mGlycPct  = (mWeight > 0.0)
                     ? (mGramsCho / (mWeight * GLYCOGEN_G_PER_KG) * 100.0)
                     : 0.0;
+
+        setFitData();
+    }
+
+    // Rescale magnitude to Garmin's calorie total when available (else 1.0).
+    function reconFactor() {
+        if (mGarminKcal > 0.0 && mModelKcal > 0.0) {
+            return mGarminKcal / mModelKcal;
+        }
+        return 1.0;
     }
 
     function onUpdate(dc) {
         var bg = getBackgroundColor();
         var fg = (bg == Graphics.COLOR_BLACK) ? Graphics.COLOR_WHITE : Graphics.COLOR_BLACK;
+        var grey = (bg == Graphics.COLOR_BLACK) ? Graphics.COLOR_LT_GRAY : Graphics.COLOR_DK_GRAY;
+        var zc = zoneColor(mPowerRoll, grey);
 
         dc.setColor(bg, bg);
         dc.clear();
@@ -214,82 +348,76 @@ class CarbBurnView extends WatchUi.DataField {
         var w = dc.getWidth();
         var h = dc.getHeight();
 
-        // Numeric values only; the unit travels in the label, because the bold
-        // FONT_NUMBER_* faces used for the figures contain no letter glyphs.
-        var carbV = mGramsCho.format("%.0f");
-        var fatV  = mGramsFat.format("%.0f");
-        var rateV = mRateDisp.format("%.0f");
-        var pctV  = mPctCho.format("%.0f");
-        var glycV = mGlycPct.format("%.0f");
-        var fmaxV = mFatMaxW.format("%d");
-
-        // Choose orientation by the field's SHAPE, not absolute pixels, so it
-        // behaves the same on every screen resolution. A field wider than it is
-        // tall lays its three core readouts out side by side; a taller field
-        // stacks them (and shows richer sets as it gets bigger).
+        // Field WIDER than tall: three core readouts side by side. Carb g/h and
+        // carb % are rolling and coloured by the current power zone.
         if (w > h) {
             var hl = ["CARBS g", "CARB g/h", "CARB %"];
-            var hv = [carbV, rateV, pctV];
-            drawHorizontal(dc, fg, w, h, hl, hv, 3);
+            var hv = [ mGramsCho.format("%.0f"),
+                       mRateDisp.format("%.0f"),
+                       mCarbPctRoll.format("%.0f") ];
+            drawHorizontal(dc, fg, w, h, hl, hv, [fg, zc, zc], 3);
             return;
         }
 
-        // Vertical: pick how many rows from how much of the screen height the
-        // field occupies (again resolution independent).
         var scrH = System.getDeviceSettings().screenHeight;
         var frac = (scrH != null && scrH > 0) ? (h.toFloat() / scrH.toFloat()) : 1.0;
 
+        // Full-screen field with room for columns: the grid.
+        if (frac >= 0.70 && w >= 200) {
+            drawGrid(dc, fg, zc, w, h);
+            return;
+        }
+
+        // Otherwise a short vertical stack (carb g/h and carb % are rolling +
+        // colour-coded).
         var labels;
         var values;
-        if (frac >= 0.70) {
-            if (mWeight > 0.0) {
-                labels = ["CARBS g", "FAT g", "CARB g/h", "CARB %", "GLYCG %", "FATMAX W"];
-                values = [carbV, fatV, rateV, pctV, glycV, fmaxV];
-            } else {
-                labels = ["CARBS g", "FAT g", "CARB g/h", "CARB %", "FATMAX W"];
-                values = [carbV, fatV, rateV, pctV, fmaxV];
-            }
-        } else if (frac >= 0.38 && mWeight > 0.0) {
+        var colors;
+        if (frac >= 0.38 && mWeight > 0.0) {
             labels = ["CARBS g", "CARB g/h", "CARB %", "GLYCG %"];
-            values = [carbV, rateV, pctV, glycV];
+            values = [ mGramsCho.format("%.0f"), mRateDisp.format("%.0f"),
+                       mCarbPctRoll.format("%.0f"), mGlycPct.format("%.0f") ];
+            colors = [fg, zc, zc, fg];
         } else {
             labels = ["CARBS g", "CARB g/h", "CARB %"];
-            values = [carbV, rateV, pctV];
+            values = [ mGramsCho.format("%.0f"), mRateDisp.format("%.0f"),
+                       mCarbPctRoll.format("%.0f") ];
+            colors = [fg, zc, zc];
         }
-        drawVertical(dc, w, h, labels, values, labels.size());
+        drawVertical(dc, fg, w, h, labels, values, colors, labels.size());
     }
 
     // Side-by-side columns, one readout per column (fields wider than tall).
-    function drawHorizontal(dc, fg, w, h, labels, values, n) {
+    // colors[i] is the colour for value i (labels stay in fg).
+    function drawHorizontal(dc, fg, w, h, labels, values, colors, n) {
         var colW = w / n;
         var numFont = Graphics.FONT_NUMBER_MILD;
         if (h >= 150) { numFont = Graphics.FONT_NUMBER_MEDIUM; }
         if (h <  60)  { numFont = Graphics.FONT_SMALL; }
 
-        // Vertically centre the label + value block.
         var lblH = dc.getFontHeight(Graphics.FONT_XTINY);
         var valH = dc.getFontHeight(numFont);
         var top  = (h - (lblH + valH)) / 2;
         if (top < 0) { top = 0; }
 
-        // Faint dividers between columns.
         dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
         for (var d = 1; d < n; d += 1) {
             dc.drawLine(d * colW, h * 0.18, d * colW, h * 0.82);
         }
-        dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
 
         for (var i = 0; i < n; i += 1) {
             var colCx = (i * colW) + (colW / 2);
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             dc.drawText(colCx, top, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
+            dc.setColor(colors[i], Graphics.COLOR_TRANSPARENT);
             dc.drawText(colCx, top + lblH, numFont,
                         values[i], Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
     // Stacked rows, one readout per row (fields taller than wide).
-    function drawVertical(dc, w, h, labels, values, n) {
+    function drawVertical(dc, fg, w, h, labels, values, colors, n) {
         var cx = w / 2;
         var rowH = h / n;
         var numFont = Graphics.FONT_NUMBER_MILD;
@@ -303,10 +431,93 @@ class CarbBurnView extends WatchUi.DataField {
 
         for (var i = 0; i < n; i += 1) {
             var yTop = (i * rowH) + pad;
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, yTop, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
+            dc.setColor(colors[i], Graphics.COLOR_TRANSPARENT);
             dc.drawText(cx, yTop + lblH, numFont,
                         values[i], Graphics.TEXT_JUSTIFY_CENTER);
+        }
+    }
+
+    // Full-screen grid: 5 rows x (label + 3 cells). The rolling carb g/h and
+    // carb % values (roll column of rows 0 and 2) are coloured by power zone (zc).
+    function drawGrid(dc, fg, zc, w, h) {
+        var recon = reconFactor();
+        var ovH  = mTotalSec / 3600.0;
+        var lapH = mLapSec / 3600.0;
+
+        var cRoll = mCarbRate * recon;
+        var fRoll = mFatRate * recon;
+        var cLap  = (lapH > 0.0) ? ((mLapCarbKcal * recon / KCAL_PER_G) / lapH) : 0.0;
+        var fLap  = (lapH > 0.0) ? ((mLapFatKcal  * recon / KCAL_PER_G_FAT) / lapH) : 0.0;
+        var cAvg  = (ovH > 0.0)  ? (mGramsCho / ovH) : 0.0;
+        var fAvg  = (ovH > 0.0)  ? (mGramsFat / ovH) : 0.0;
+        var pLap  = (mLapKcal > 0.0) ? (mLapCarbKcal / mLapKcal * 100.0) : 0.0;
+
+        var hasW    = (mWeight > 0.0);
+        var glyTot  = mWeight * GLYCOGEN_G_PER_KG;
+        var glyLeft = hasW ? (glyTot - mGramsCho) : 0.0;
+        if (glyLeft < 0.0) { glyLeft = 0.0; }
+        var glyLeftPct = hasW ? (glyLeft / glyTot * 100.0) : 0.0;
+        var glyLeftStr = hasW ? glyLeft.format("%.0f") : "--";
+        var glyPctStr  = hasW ? glyLeftPct.format("%.0f") : "--";
+
+        var nRows = 5;
+        var rowH  = h / nRows;
+        var leftW = w * 24 / 100;
+        var cellW = (w - leftW) / 3;
+
+        var fSub = Graphics.FONT_XTINY;
+        var fVal = (h >= 380) ? Graphics.FONT_SMALL : Graphics.FONT_TINY;
+        var fRow = Graphics.FONT_TINY;
+        var subH = dc.getFontHeight(fSub);
+        var valH = dc.getFontHeight(fVal);
+        var rowLH = dc.getFontHeight(fRow);
+
+        // grid lines
+        dc.setColor(Graphics.COLOR_LT_GRAY, Graphics.COLOR_TRANSPARENT);
+        for (var r = 1; r < nRows; r += 1) { dc.drawLine(0, r * rowH, w, r * rowH); }
+        dc.drawLine(leftW, 0, leftW, h);
+        dc.drawLine(leftW + cellW, 0, leftW + cellW, h);
+        dc.drawLine(leftW + 2 * cellW, 0, leftW + 2 * cellW, h);
+        dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+
+        var eqSub = mCarbIntake.format("%.0f") + "g eq";
+        var rowNames = ["CARB/h", "FAT/h", "CARB%", "STORE", "PWR"];
+        var subs = [
+            ["roll", "lap", "avg"],
+            ["roll", "lap", "avg"],
+            ["roll", "lap", "avg"],
+            ["carb g", "gly g", "gly %"],
+            ["fatmax", "xover", eqSub]
+        ];
+        var vals = [
+            [cRoll.format("%.0f"), cLap.format("%.0f"), cAvg.format("%.0f")],
+            [fRoll.format("%.0f"), fLap.format("%.0f"), fAvg.format("%.0f")],
+            [mCarbPctRoll.format("%.0f"), pLap.format("%.0f"), mPctCho.format("%.0f")],
+            [mGramsCho.format("%.0f"), glyLeftStr, glyPctStr],
+            [mFatMaxW.format("%d"), mP50.format("%.0f"), mEquilW.format("%d")]
+        ];
+
+        for (var row = 0; row < nRows; row += 1) {
+            var rowTop = row * rowH;
+            dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+            dc.drawText(6, rowTop + (rowH - rowLH) / 2, fRow,
+                        rowNames[row], Graphics.TEXT_JUSTIFY_LEFT);
+            var blockTop = rowTop + (rowH - (subH + valH)) / 2;
+            for (var c = 0; c < 3; c += 1) {
+                if (vals[row][c] == null) { continue; }
+                var cx = leftW + c * cellW + cellW / 2;
+                dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(cx, blockTop, fSub, subs[row][c],
+                            Graphics.TEXT_JUSTIFY_CENTER);
+                // roll cells of CARB/h (row 0) and CARB% (row 2) get the zone colour
+                var vcol = ((c == 0) && ((row == 0) || (row == 2))) ? zc : fg;
+                dc.setColor(vcol, Graphics.COLOR_TRANSPARENT);
+                dc.drawText(cx, blockTop + subH, fVal, vals[row][c],
+                            Graphics.TEXT_JUSTIFY_CENTER);
+            }
         }
     }
 }

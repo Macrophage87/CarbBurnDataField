@@ -27,7 +27,9 @@
             <iq:product id="fenix8pro47mm"/>
             <iq:product id="fr955"/>
         </iq:products>
-        <iq:permissions/>
+        <iq:permissions>
+            <iq:uses-permission id="FitContributor"/>
+        </iq:permissions>
         <iq:languages>
             <iq:language>eng</iq:language>
         </iq:languages>

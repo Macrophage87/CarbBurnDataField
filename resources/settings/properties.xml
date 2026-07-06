@@ -5,6 +5,8 @@
     <property id="lt1" type="number">0</property>
     <!-- Gross efficiency, percent. Typical trained cyclist ~19-24% -->
     <property id="grossEfficiency" type="number">21</property>
-    <!-- Body weight, kg. Set it to match your Garmin profile. 0 = disable glycogen readout -->
+    <!-- Body weight, kg. Match your Garmin profile. 0 = disable glycogen readout -->
     <property id="weight" type="number">75</property>
+    <!-- Typical carbohydrate intake during the ride, g/h. Sets the fueling-equilibrium power. -->
+    <property id="carbIntake" type="number">60</property>
 </properties>

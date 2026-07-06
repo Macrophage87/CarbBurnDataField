@@ -11,4 +11,7 @@
     <setting propertyKey="@Properties.weight" title="@Strings.WeightTitle">
         <settingConfig type="numeric" min="0" max="200"/>
     </setting>
+    <setting propertyKey="@Properties.carbIntake" title="@Strings.IntakeTitle">
+        <settingConfig type="numeric" min="0" max="150"/>
+    </setting>
 </settings>

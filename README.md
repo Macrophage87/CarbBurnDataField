@@ -3,17 +3,52 @@
 A cycling data field that estimates **carbohydrate (CHO) oxidation** live from power,
 using your **FTP** and (optionally) **LT1 / aerobic threshold**.
 
-It shows several values in one field (extra rows appear automatically on taller
-field slots):
+The layout adapts to the field's shape:
 
-- **CARBS** — total carbohydrate burned (grams, cumulative)
-- **CARB/HR** — current carb burn rate (grams/hour, smoothed)
-- **% CARB** — session-average share of expenditure from carbohydrate
-- **GLYCOGEN** — estimated % of glycogen stores used (needs body weight; shown
-  only on taller layouts)
-- **FAT** — total fat burned (grams, cumulative; very large / full-screen layouts)
-- **FATMAX** — the power (W) that maximises fat oxidation for your thresholds — a
-  fat-burning target wattage, computed from the model (very large / full-screen layouts)
+- **Wide, short field** — the three core readouts side by side: **CARBS g** (total),
+  **CARB g/h** and **CARB %**. The rate and the % are both *rolling* (smoothed on the
+  same interval), so they rise and fall together.
+- **In-between field** — a short vertical stack of the same values, plus **GLYCG %**
+  (glycogen used) when body weight is set.
+- **Full screen** — a grid showing, for **carb g/h**, **fat g/h** and **carb %**, the
+  **rolling / lap-average / overall-average**; plus **carbs spent**, **glycogen left**
+  (g and %), and three key wattages: **fat-max**, the **50% crossover**, and the
+  **fueling-equilibrium** power (where carb burn matches your carb intake — below it
+  you spare glycogen, above it you deplete).
+
+### Colour zones
+
+The rolling **carb g/h** and **carb %** are colour-coded by the current (smoothed)
+power, so the numbers double as a pacing cue:
+
+- **grey** — well below fat-max (< 90% of fat-max)
+- **blue** — around fat-max (±10%)
+- **green** — fat-max up to the 50%-carb crossover
+- **orange** — 50%-carb crossover up to the 90%-carb power
+- **red** — above the 90%-carb power (carbohydrate almost entirely dominant)
+
+All boundaries are derived from your own thresholds (fat-max, the 50%-carb
+crossover, and the 90%-carb power), so they scale per rider. For the generic
+sample rider (FTP 250 W, LT1 175 W) they fall at roughly:
+
+| Zone | Power | Colour |
+|---|---|---|
+| Well below fat-max | < 137 W | grey |
+| Around fat-max | 137–167 W | blue |
+| Fat-max → 50%-carb | 167–195 W | green |
+| 50%-carb → 90%-carb | 195–265 W | orange |
+| Above 90%-carb | > 265 W | red |
+
+Because the 90%-carb power usually sits above FTP, **red only appears during hard
+efforts above threshold.** The smoothed power (not the instantaneous value) drives
+the colour, so it transitions cleanly rather than flickering on surges.
+
+### FIT recording
+
+Cumulative **carbohydrate (g)** and **fat (g)** are written into the activity's
+`.FIT` file — as per-record fields (a graphable time series) and as session totals
+— so they're available in Garmin Connect and analysis tools after the ride. This
+uses the `FitContributor` permission.
 
 ## How it works
 
@@ -74,6 +109,7 @@ Set weight to `0` to disable the glycogen readout.
 | LT1 / aerobic threshold (watts) | 0 = not tested (estimated from FTP) | 0 |
 | Gross efficiency (%) | Trained cyclists ~19–24% | 21 |
 | Body weight (kg) | Match your Garmin profile; 0 = disable glycogen readout | 75 |
+| Carb intake (g/h) | Assumed carbohydrate intake — sets the fueling-equilibrium power | 60 |
 
 ## Build / install
 
