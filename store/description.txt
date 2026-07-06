@@ -1,0 +1,41 @@
+Carb Burn — know exactly how you're fueling, in real time.
+
+Carb Burn is a cycling data field that estimates how many grams of carbohydrate and fat you're burning every second — straight from your power meter. Stop guessing at your fuel mix: see it live, and pace and eat to match.
+
+HOW IT WORKS
+Using your FTP and (optionally) your LT1 / aerobic threshold, Carb Burn models the classic substrate "crossover" — mostly fat at easy intensities, shifting to carbohydrate as you push harder. It converts power to energy expenditure and splits it into carbs versus fat, second by second, grounded in published exercise-physiology models.
+
+WHAT YOU SEE
+The layout adapts to your data-screen slot:
+- Small / wide fields: carbs burned (g), carb burn rate (g/h), and carb % — the rate and % roll together on a smooth interval.
+- Full screen: a rich grid with rolling / lap-average / overall-average for carb g/h, fat g/h and carb %, plus carbs spent, glycogen remaining (g and %), and three key wattages — fat-max, the 50% crossover, and your fueling-equilibrium power.
+
+COLOR-CODED PACING
+The rolling carb readouts change color by power zone: grey well below fat-max, blue around fat-max, green up to the 50% crossover, orange up to the 90%-carb power, and red above. One glance tells you which fuel system you're taxing.
+
+FUELING EQUILIBRIUM
+Set your typical carb intake (default 60 g/h) and Carb Burn shows the power at which your carb burn equals your intake — the pace you can hold without draining glycogen. Below it you're sparing; above it you're depleting. Perfect for pacing long climbs and events.
+
+GLYCOGEN GAUGE
+Enter your body weight and it estimates your glycogen stores, how much you've spent, and how much remains — a live fuel tank for long rides.
+
+RECORDS TO YOUR FIT FILE
+Cumulative carbohydrate and fat (grams) are written into your activity's FIT file — as a graphable time series and as session totals — so you can review your fueling in Garmin Connect and other analysis tools after every ride.
+
+SETTINGS
+- FTP (watts) — required
+- LT1 / aerobic threshold (watts) — optional; estimated from FTP if left at 0
+- Gross efficiency (%) — default 21
+- Body weight (kg) — for the glycogen gauge and calorie cross-check
+- Carb intake (g/h) — sets the fueling-equilibrium power
+
+GOOD TO KNOW
+- Requires a power meter and your FTP to be set.
+- Add the field to a data screen so it can compute and record.
+- Carb Burn is a power-based estimate for training and fueling guidance, not a laboratory measurement — individual substrate use varies with diet, training status, sex and genetics. Calibrate the gross-efficiency and thresholds to your own numbers for best accuracy.
+
+LEARN MORE
+The full methodology — every equation, the crossover model, the fat-max and equilibrium derivations, and the peer-reviewed citations — is in the technical white paper:
+https://github.com/Macrophage87/CarbBurnDataField/blob/main/CarbBurn_WhitePaper.pdf
+
+Fuel smarter. Ride longer. Burn on.
