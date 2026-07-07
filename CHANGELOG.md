@@ -10,15 +10,16 @@ Notable changes to the Carb Burn data field.
   *carb g/h* and *carb %* readouts was previously driven by a separately
   smoothed power stream, so it could briefly disagree with the rolling carb %
   shown next to it. The colour is now derived from the **same rolling values
-  the field displays**: red at ≥90% rolling carb energy, orange at ≥50%.
+  the field displays**: red at 90% or more rolling carb energy, orange at 50%
+  or more.
 - **The blue "fat-max band" is now defined by grams/hour, not watts.** Blue
   shows while the rolling fat oxidation rate is within **5%** of the modelled
   peak fat g/h — i.e. "you are burning fat at close to your maximum rate" —
   instead of a ±10% watts window around the fat-max power. Green covers the
   range between the top of the band and the 50%-carb crossover; grey sits
   below the band. For the generic sample rider (FTP 250 W, LT1 175 W) the
-  steady-state boundaries are now roughly: grey < 130 W, blue 130–173 W,
-  green 173–195 W, orange 195–265 W, red > 265 W.
+  steady-state boundaries are now roughly: grey under 130 W, blue 130–173 W,
+  green 173–195 W, orange 195–265 W, red above 265 W.
 - **Better readability on light backgrounds.** The coloured readouts use
   Garmin's darker blue and green palette entries (`COLOR_DK_BLUE`,
   `COLOR_DK_GREEN`) on white backgrounds; the bright variants are kept on
