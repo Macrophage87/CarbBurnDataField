@@ -62,10 +62,12 @@ the colour, so it transitions cleanly rather than flickering on surges.
 
 ### FIT recording
 
-Cumulative **carbohydrate (g)** and **fat (g)** are written into the activity's
-`.FIT` file — as per-record fields (a graphable time series) and as session totals
-— so they're available in Garmin Connect and analysis tools after the ride. This
-uses the `FitContributor` permission.
+The rolling **carbohydrate rate** and **fat rate** (`carb_rate` / `fat_rate`,
+g/h) are written into the activity's `.FIT` file as per-record fields — a
+graphable time series that rises and falls with intensity — and the cumulative
+totals (`total_carbohydrates` / `total_fat`, g) as session fields, so both are
+available in Garmin Connect and analysis tools (e.g. intervals.icu custom
+fields/streams) after the ride. This uses the `FitContributor` permission.
 
 ## How it works
 
@@ -133,10 +135,9 @@ Set weight to `0` to disable the glycogen readout.
 1. Install the **Connect IQ SDK Manager**, the **VS Code Monkey C extension**, and a
    **JDK** (see the setup notes from earlier).
 2. Open this folder in VS Code.
-3. If the build complains about the application id, run **Monkey C: New Project** once
-   to let the extension generate a fresh id, then copy these `source/` and `resources/`
-   files and `manifest.xml` settings over — or just replace the `id="..."` in
-   `manifest.xml` with your own 32-char hex GUID.
+3. The manifest ships with a real 32-char hex GUID. If you fork this project and
+   publish your own build, replace the `id="..."` in `manifest.xml` with your own
+   GUID so the two apps don't collide.
 4. Generate a developer key if you don't have one: **Monkey C: Generate a Developer Key**.
 5. **Monkey C: Build for Device** → produces a `.prg`. Copy it to
    `GARMIN/APPS/` on your device over USB, or run in the simulator

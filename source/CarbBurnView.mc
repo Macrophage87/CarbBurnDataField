@@ -28,9 +28,10 @@ using Toybox.FitContributor;
 //   - In-between fields       -> a short vertical stack.
 //
 // FIT recording
-//   Cumulative carbohydrate and fat grams are written to the .FIT file both as
-//   per-record fields (a graphable time series) and as session totals. Requires
-//   the FitContributor permission (declared in the manifest).
+//   The rolling carbohydrate and fat oxidation rates (g/h) are written to the
+//   .FIT file as per-record fields (a graphable time series), and the
+//   cumulative grams as session totals. Requires the FitContributor permission
+//   (declared in the manifest).
 //
 class CarbBurnView extends WatchUi.DataField {
 
@@ -71,8 +72,8 @@ class CarbBurnView extends WatchUi.DataField {
     private var mLastTimerMs;
 
     // ---- FIT file contributor fields ----
-    private var mFitCarbRec;   // per-record cumulative carbs (g)
-    private var mFitFatRec;    // per-record cumulative fat (g)
+    private var mFitCarbRec;   // per-record rolling carb rate (g/h)
+    private var mFitFatRec;    // per-record rolling fat rate (g/h)
     private var mFitCarbSes;   // session total carbs (g)
     private var mFitFatSes;    // session total fat (g)
 
@@ -98,13 +99,13 @@ class CarbBurnView extends WatchUi.DataField {
         createFitFields();
     }
 
-    // Register the custom FIT fields: per-record (time series) and per-session
-    // (activity total) carbohydrate and fat, in grams.
+    // Register the custom FIT fields: per-record rolling oxidation rates (g/h,
+    // a graphable time series) and per-session totals (g).
     function createFitFields() {
-        mFitCarbRec = createField("carbohydrates", 0, FitContributor.DATA_TYPE_UINT16,
-            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g"});
-        mFitFatRec  = createField("fat", 1, FitContributor.DATA_TYPE_UINT16,
-            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g"});
+        mFitCarbRec = createField("carb_rate", 0, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g/h"});
+        mFitFatRec  = createField("fat_rate", 1, FitContributor.DATA_TYPE_UINT16,
+            {:mesgType => FitContributor.MESG_TYPE_RECORD, :units => "g/h"});
         mFitCarbSes = createField("total_carbohydrates", 2, FitContributor.DATA_TYPE_UINT16,
             {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "g"});
         mFitFatSes  = createField("total_fat", 3, FitContributor.DATA_TYPE_UINT16,
@@ -115,14 +116,14 @@ class CarbBurnView extends WatchUi.DataField {
         mFitFatSes.setData(0);
     }
 
-    // Push the current cumulative grams to the FIT fields (UINT16, clamped).
+    // Push the rolling rates (g/h) to the record fields and the cumulative
+    // grams to the session fields (UINT16, clamped). All reconciled.
     function setFitData() {
-        var c = clampU16(mGramsCho);
-        var f = clampU16(mGramsFat);
-        if (mFitCarbRec != null) { mFitCarbRec.setData(c); }
-        if (mFitFatRec  != null) { mFitFatRec.setData(f); }
-        if (mFitCarbSes != null) { mFitCarbSes.setData(c); }
-        if (mFitFatSes  != null) { mFitFatSes.setData(f); }
+        var recon = reconFactor();
+        if (mFitCarbRec != null) { mFitCarbRec.setData(clampU16(mRateDisp)); }
+        if (mFitFatRec  != null) { mFitFatRec.setData(clampU16(mFatRate * recon)); }
+        if (mFitCarbSes != null) { mFitCarbSes.setData(clampU16(mGramsCho)); }
+        if (mFitFatSes  != null) { mFitFatSes.setData(clampU16(mGramsFat)); }
     }
 
     function clampU16(x) {
