@@ -148,6 +148,11 @@ Set weight to `0` to disable the glycogen readout.
    (**Monkey C: Run App**, then Simulation → Data Fields).
 6. On the device: add **Carb Burn** to a ride data screen. Give it a full-screen or
    half-screen slot so both numbers fit.
+7. **Store release:** run `tools/build_iq.sh` to export a signed
+   `dist/CarbBurn-<version>.iq` (it uses your installed SDK and developer key,
+   generating a key if you have none), then upload it at
+   [apps.garmin.com/developer/upload](https://apps.garmin.com/developer/upload).
+   The VS Code equivalent is **Monkey C: Export Project**.
 
 ## Accuracy / caveats
 
@@ -174,6 +179,7 @@ CHANGELOG.md                         notable changes by release
 carb_curve.png                       Figure 1 — energy share vs power
 grams_curve.png                      Figure 2 — grams/hour vs power
 tools/simulate_fields.py             renders the simulated field screenshots
+tools/build_iq.sh                    exports a signed .iq for the Connect IQ Store
 simulated_field_small.png            simulated wide (3-column) field
 simulated_field_large.png            simulated full-screen grid field
 ```

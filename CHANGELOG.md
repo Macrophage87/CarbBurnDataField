@@ -2,7 +2,7 @@
 
 Notable changes to the Carb Burn data field.
 
-## [Unreleased] — 2026-07-07
+## [1.1.0] — 2026-07-07
 
 ### Changed — colour zones
 
@@ -51,6 +51,9 @@ Notable changes to the Carb Burn data field.
 
 ### Added
 
+- **One-command store export.** `tools/build_iq.sh` exports a signed
+  release `.iq` package (into `dist/`) using the installed Connect IQ SDK,
+  generating a developer key first if none exists.
 - **Simulated screenshots.** `tools/simulate_fields.py` ports the physiology
   model and both main layouts to Python, replays a scripted 90-minute ride
   (warm-up, endurance, 4×3-min VO2 intervals, tempo) at 1 Hz, and renders
