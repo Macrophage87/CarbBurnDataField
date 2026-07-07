@@ -41,7 +41,7 @@ displays* (the rolling carb % and rolling fat g/h), so it always matches the
 numbers on screen — there is no separate smoothing to lag behind:
 
 - **grey** — below the fat-max band
-- **blue** — the fat-max band: rolling fat oxidation within 10% of its modelled
+- **blue** — the fat-max band: rolling fat oxidation within 5% of its modelled
   peak g/h (i.e. you're burning fat at close to your maximum rate)
 - **green** — above the fat-max band, up to 50% rolling carb energy
 - **orange** — 50–90% rolling carb energy
@@ -54,9 +54,9 @@ correspond to steady-state powers of roughly:
 
 | Zone | Steady power | Colour |
 |---|---|---|
-| Below the fat-max band | < 119 W | grey |
-| Fat-max band (fat g/h ≥ 90% of peak) | 119–182 W | blue |
-| Band top → 50%-carb crossover | 182–195 W | green |
+| Below the fat-max band | < 130 W | grey |
+| Fat-max band (fat g/h ≥ 95% of peak) | 130–173 W | blue |
+| Band top → 50%-carb crossover | 173–195 W | green |
 | 50%-carb → 90%-carb | 195–265 W | orange |
 | Above 90%-carb | > 265 W | red |
 

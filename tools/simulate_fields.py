@@ -117,7 +117,7 @@ class CarbBurnModel:
             return COLOR_RED
         if self.carb_pct_roll >= 50.0:
             return COLOR_ORANGE
-        if self.fat_rate >= 0.90 * self.fat_max_rate:
+        if self.fat_rate >= 0.95 * self.fat_max_rate:
             return COLOR_BLUE if on_dark else COLOR_DK_BLUE
         if self.carb_pct_roll >= self.pct_fat_max:
             return COLOR_GREEN if on_dark else COLOR_DK_GREEN

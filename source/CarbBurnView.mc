@@ -235,13 +235,13 @@ class CarbBurnView extends WatchUi.DataField {
     // Colour for the rolling carb readouts, derived from the SAME rolling
     // values the field displays (so the colour never lags the numbers):
     // red at >=90% rolling carb energy, orange at >=50%, blue while the
-    // rolling fat g/h is within 10% of the modelled peak (the fat-max band),
+    // rolling fat g/h is within 5% of the modelled peak (the fat-max band),
     // green between that band and the 50% crossover, grey below the band.
     // On light backgrounds the dark blue/green variants keep the text readable.
     function zoneColor(greyColor, onDark) {
         if (mCarbPctRoll >= 90.0) { return Graphics.COLOR_RED; }
         if (mCarbPctRoll >= 50.0) { return Graphics.COLOR_ORANGE; }
-        if (mFatRate * reconFactor() >= 0.90 * mFatMaxRate) {
+        if (mFatRate * reconFactor() >= 0.95 * mFatMaxRate) {
             return onDark ? Graphics.COLOR_BLUE : Graphics.COLOR_DK_BLUE;
         }
         if (mCarbPctRoll >= mPctFatMax) {
