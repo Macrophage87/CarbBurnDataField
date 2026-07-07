@@ -170,6 +170,7 @@ resources/strings/strings.xml        display strings
 resources/drawables/drawables.xml    launcher icon reference
 resources/drawables/launcher_icon.png
 CarbBurn_WhitePaper.pdf              technical white paper (derivation + citations)
+CHANGELOG.md                         notable changes by release
 carb_curve.png                       Figure 1 — energy share vs power
 grams_curve.png                      Figure 2 — grams/hour vs power
 tools/simulate_fields.py             renders the simulated field screenshots
