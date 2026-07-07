@@ -35,30 +35,34 @@ and key wattages:
 
 ### Colour zones
 
-The rolling **carb g/h** and **carb %** are colour-coded by the current (smoothed)
-power, so the numbers double as a pacing cue:
+The rolling **carb g/h** and **carb %** are colour-coded so the numbers double as
+a pacing cue. The colour is derived from the *same rolling values the field
+displays* (the rolling carb % and rolling fat g/h), so it always matches the
+numbers on screen — there is no separate smoothing to lag behind:
 
-- **grey** — well below fat-max (< 90% of fat-max)
-- **blue** — around fat-max (±10%)
-- **green** — fat-max up to the 50%-carb crossover
-- **orange** — 50%-carb crossover up to the 90%-carb power
-- **red** — above the 90%-carb power (carbohydrate almost entirely dominant)
+- **grey** — below the fat-max band
+- **blue** — the fat-max band: rolling fat oxidation within 10% of its modelled
+  peak g/h (i.e. you're burning fat at close to your maximum rate)
+- **green** — above the fat-max band, up to 50% rolling carb energy
+- **orange** — 50–90% rolling carb energy
+- **red** — ≥90% rolling carb energy (carbohydrate almost entirely dominant)
 
-All boundaries are derived from your own thresholds (fat-max, the 50%-carb
-crossover, and the 90%-carb power), so they scale per rider. For the generic
-sample rider (FTP 250 W, LT1 175 W) they fall at roughly:
+On light backgrounds the darker blue/green variants are used so the coloured
+numbers stay readable. All boundaries are derived from your own thresholds, so
+they scale per rider. For the generic sample rider (FTP 250 W, LT1 175 W) they
+correspond to steady-state powers of roughly:
 
-| Zone | Power | Colour |
+| Zone | Steady power | Colour |
 |---|---|---|
-| Well below fat-max | < 137 W | grey |
-| Around fat-max | 137–167 W | blue |
-| Fat-max → 50%-carb | 167–195 W | green |
+| Below the fat-max band | < 119 W | grey |
+| Fat-max band (fat g/h ≥ 90% of peak) | 119–182 W | blue |
+| Band top → 50%-carb crossover | 182–195 W | green |
 | 50%-carb → 90%-carb | 195–265 W | orange |
 | Above 90%-carb | > 265 W | red |
 
-Because the 90%-carb power usually sits above FTP, **red only appears during hard
-efforts above threshold.** The smoothed power (not the instantaneous value) drives
-the colour, so it transitions cleanly rather than flickering on surges.
+Because the 90%-carb level usually needs a power above FTP, **red only appears
+during hard efforts above threshold.** The rolling (smoothed) values drive the
+colour, so it transitions cleanly rather than flickering on surges.
 
 ### FIT recording
 

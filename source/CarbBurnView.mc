@@ -46,10 +46,8 @@ class CarbBurnView extends WatchUi.DataField {
     private var mFatMaxW;   // power (W) that maximises fat oxidation rate
     private var mCarbIntake;// assumed carb intake during the ride, g/hr
     private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
-    private var mPowerRoll; // smoothed power (W) for zone colouring
-    private var mZBlueLo;   // fat-max * 0.90 (grey below)
-    private var mZBlueHi;   // fat-max * 1.10 (blue band around fat-max)
-    private var mZRed;      // power where carb fraction hits 90% (red above)
+    private var mFatMaxRate;// peak fat oxidation rate (g/h) at fat-max power
+    private var mPctFatMax; // carb % of energy at fat-max power
 
     // ---- Session (overall) accumulators ----
     private var mModelKcal;      // total metabolic kcal (power / GE)
@@ -144,7 +142,6 @@ class CarbBurnView extends WatchUi.DataField {
         mCarbRate      = 0.0;
         mFatRate       = 0.0;
         mCarbPctRoll   = 0.0;
-        mPowerRoll     = 0.0;
         mLastTimerMs   = 0;
         mGramsCho      = 0.0;
         mGramsFat      = 0.0;
@@ -228,23 +225,29 @@ class CarbBurnView extends WatchUi.DataField {
         if (eqP == 0) { eqP = 600; }   // intake exceeds burn even at 600 W
         mEquilW = eqP;
 
-        // Colour-zone thresholds (watts) for the rolling carb readouts.
-        mZBlueLo = mFatMaxW * 0.90;   // grey below this
-        mZBlueHi = mFatMaxW * 1.10;   // blue band around fat-max
-        // Red once the carb fraction exceeds 90%: choFraction(P)=0.90 solves to
-        // P = P50 + logit(0.90)/k, with logit(0.90) = ln(9) = 2.19722.
-        mZRed    = mP50 + 2.19722 / mK;
+        // Colour-zone anchors for the rolling carb readouts: the modelled peak
+        // fat oxidation rate (g/h) and the carb energy share at fat-max.
+        mFatMaxRate = (1.0 - choFraction(mFatMaxW))
+                      * (mFatMaxW / mGe) / J_PER_KCAL * 3600.0 / KCAL_PER_G_FAT;
+        mPctFatMax  = choFraction(mFatMaxW) * 100.0;
     }
 
-    // Colour for the rolling carb readouts from the (smoothed) power zone:
-    // grey well below fat-max, blue around fat-max, green up to the 50% crossover,
-    // orange up to the 90%-carb power, red above.
-    function zoneColor(power, greyColor) {
-        if (power < mZBlueLo) { return greyColor; }
-        if (power < mZBlueHi) { return Graphics.COLOR_BLUE; }
-        if (power < mP50)     { return Graphics.COLOR_GREEN; }
-        if (power < mZRed)    { return Graphics.COLOR_ORANGE; }
-        return Graphics.COLOR_RED;
+    // Colour for the rolling carb readouts, derived from the SAME rolling
+    // values the field displays (so the colour never lags the numbers):
+    // red at >=90% rolling carb energy, orange at >=50%, blue while the
+    // rolling fat g/h is within 10% of the modelled peak (the fat-max band),
+    // green between that band and the 50% crossover, grey below the band.
+    // On light backgrounds the dark blue/green variants keep the text readable.
+    function zoneColor(greyColor, onDark) {
+        if (mCarbPctRoll >= 90.0) { return Graphics.COLOR_RED; }
+        if (mCarbPctRoll >= 50.0) { return Graphics.COLOR_ORANGE; }
+        if (mFatRate * reconFactor() >= 0.90 * mFatMaxRate) {
+            return onDark ? Graphics.COLOR_BLUE : Graphics.COLOR_DK_BLUE;
+        }
+        if (mCarbPctRoll >= mPctFatMax) {
+            return onDark ? Graphics.COLOR_GREEN : Graphics.COLOR_DK_GREEN;
+        }
+        return greyColor;
     }
 
     // Modelled carbohydrate oxidation rate at a given power, g/hr.
@@ -301,13 +304,11 @@ class CarbBurnView extends WatchUi.DataField {
                 mCarbRate    = mCarbRate    + RATE_ALPHA * (instCarb - mCarbRate);
                 mFatRate     = mFatRate     + RATE_ALPHA * (instFat  - mFatRate);
                 mCarbPctRoll = mCarbPctRoll + RATE_ALPHA * (instPct  - mCarbPctRoll);
-                mPowerRoll   = mPowerRoll   + RATE_ALPHA * (p        - mPowerRoll);
             } else {
-                // Coasting: decay the rolling rates and power toward zero; hold the
+                // Coasting: decay the rolling rates toward zero; hold the
                 // % (a ratio is undefined with no substrate flux).
                 mCarbRate  = mCarbRate  + RATE_ALPHA * (0.0 - mCarbRate);
                 mFatRate   = mFatRate   + RATE_ALPHA * (0.0 - mFatRate);
-                mPowerRoll = mPowerRoll + RATE_ALPHA * (0.0 - mPowerRoll);
             }
         }
 
@@ -338,9 +339,10 @@ class CarbBurnView extends WatchUi.DataField {
 
     function onUpdate(dc) {
         var bg = getBackgroundColor();
-        var fg = (bg == Graphics.COLOR_BLACK) ? Graphics.COLOR_WHITE : Graphics.COLOR_BLACK;
-        var grey = (bg == Graphics.COLOR_BLACK) ? Graphics.COLOR_LT_GRAY : Graphics.COLOR_DK_GRAY;
-        var zc = zoneColor(mPowerRoll, grey);
+        var onDark = (bg == Graphics.COLOR_BLACK);
+        var fg = onDark ? Graphics.COLOR_WHITE : Graphics.COLOR_BLACK;
+        var grey = onDark ? Graphics.COLOR_LT_GRAY : Graphics.COLOR_DK_GRAY;
+        var zc = zoneColor(grey, onDark);
 
         dc.setColor(bg, bg);
         dc.clear();
@@ -472,6 +474,12 @@ class CarbBurnView extends WatchUi.DataField {
         var fSub = Graphics.FONT_XTINY;
         var fVal = (h >= 380) ? Graphics.FONT_SMALL : Graphics.FONT_TINY;
         var fRow = Graphics.FONT_TINY;
+        if (h >= 550) {
+            // Large screens (e.g. Edge 1050, 480x800): bigger everything.
+            fSub = Graphics.FONT_TINY;
+            fVal = Graphics.FONT_LARGE;
+            fRow = Graphics.FONT_SMALL;
+        }
         var subH = dc.getFontHeight(fSub);
         var valH = dc.getFontHeight(fVal);
         var rowLH = dc.getFontHeight(fRow);
