@@ -2,7 +2,7 @@
 
 Notable changes to the Carb Burn data field.
 
-## [1.1.0] — 2026-07-07
+## [1.2] — 2026-07-07
 
 ### Changed — colour zones
 
