@@ -35,37 +35,43 @@ and key wattages:
 
 ### Color zones
 
-The rolling **carb g/h** and **carb %** are color-coded by the current (smoothed)
-power, so the numbers double as a pacing cue:
+The rolling **carb g/h** and **carb %** are color-coded so the numbers double as a
+pacing cue. The color is derived from the *same rolling values the field displays*
+(the rolling carb % and rolling fat g/h), so it always matches the numbers on
+screen — there's no separate smoothing to lag behind:
 
 - **grey** — below the fat-max band
-- **blue** — the fat-max band: within 5% (by grams) of peak fat oxidation
-- **green** — top of the fat-max band up to the 50%-carb crossover
-- **orange** — 50%-carb crossover up to FTP
-- **red** — above FTP (carbohydrate almost entirely dominant)
+- **blue** — the fat-max band: rolling fat oxidation within 5% of its modeled peak
+  g/h (you're burning fat at close to your maximum rate)
+- **green** — above the fat-max band, up to the 50%-carb crossover
+- **orange** — 50%-carb crossover up to FTP (50–85% rolling carb energy)
+- **red** — at or above FTP (≥85% rolling carb energy; carbohydrate almost entirely dominant)
 
-All boundaries are derived from your own thresholds (the fat-max band, the 50%-carb
-crossover, and FTP), so they scale per rider. For the generic sample rider
-(FTP 250 W, LT1 175 W) they fall at roughly:
+On light backgrounds the darker blue/green variants are used so the colored numbers
+stay readable. All boundaries derive from your own thresholds, so they scale per
+rider. For the generic sample rider (FTP 250 W, LT1 175 W) they correspond to
+steady-state powers of roughly:
 
-| Zone | Power | Color |
+| Zone | Steady power | Color |
 |---|---|---|
 | Below the fat-max band | < 130 W | grey |
-| Fat-max band (fat within 5% of peak) | 130–173 W | blue |
-| Top of band → 50%-carb | 173–195 W | green |
+| Fat-max band (fat g/h ≥ 95% of peak) | 130–173 W | blue |
+| Band top → 50%-carb crossover | 173–195 W | green |
 | 50%-carb → FTP | 195–250 W | orange |
 | Above FTP | > 250 W | red |
 
-Red begins exactly at FTP, so it flags **efforts above your one-hour power**. The
-smoothed power (not the instantaneous value) drives the color, so it transitions
+Red begins at FTP (the model's 85%-carb power), so it flags **efforts above your
+one-hour power**. The rolling (smoothed) values drive the color, so it transitions
 cleanly rather than flickering on surges.
 
 ### FIT recording
 
-Cumulative **carbohydrate (g)** and **fat (g)** are written into the activity's
-`.FIT` file — as per-record fields (a graphable time series) and as session totals
-— so they're available in Garmin Connect and analysis tools after the ride. This
-uses the `FitContributor` permission.
+The rolling **carbohydrate rate** and **fat rate** (`carb_rate` / `fat_rate`,
+g/h) are written into the activity's `.FIT` file as per-record fields — a
+graphable time series that rises and falls with intensity — and the cumulative
+totals (`total_carbohydrates` / `total_fat`, g) as session fields, so both are
+available in Garmin Connect and analysis tools (e.g. intervals.icu custom
+fields/streams) after the ride. This uses the `FitContributor` permission.
 
 ## How it works
 
@@ -135,16 +141,20 @@ Set weight to `0` to disable the glycogen readout.
 1. Install the **Connect IQ SDK Manager**, the **VS Code Monkey C extension**, and a
    **JDK** (see the setup notes from earlier).
 2. Open this folder in VS Code.
-3. If the build complains about the application id, run **Monkey C: New Project** once
-   to let the extension generate a fresh id, then copy these `source/` and `resources/`
-   files and `manifest.xml` settings over — or just replace the `id="..."` in
-   `manifest.xml` with your own 32-char hex GUID.
+3. The manifest ships with a real 32-char hex GUID. If you fork this project and
+   publish your own build, replace the `id="..."` in `manifest.xml` with your own
+   GUID so the two apps don't collide.
 4. Generate a developer key if you don't have one: **Monkey C: Generate a Developer Key**.
 5. **Monkey C: Build for Device** → produces a `.prg`. Copy it to
    `GARMIN/APPS/` on your device over USB, or run in the simulator
    (**Monkey C: Run App**, then Simulation → Data Fields).
 6. On the device: add **Carb Burn** to a ride data screen. Give it a full-screen or
    half-screen slot so both numbers fit.
+7. **Store release:** run `tools/build_iq.sh` to export a signed
+   `dist/CarbBurn-<version>.iq` (it uses your installed SDK and developer key,
+   generating a key if you have none), then upload it at
+   [apps.garmin.com/developer/upload](https://apps.garmin.com/developer/upload).
+   The VS Code equivalent is **Monkey C: Export Project**.
 
 ## Accuracy / caveats
 
@@ -167,9 +177,11 @@ resources/strings/strings.xml        display strings
 resources/drawables/drawables.xml    launcher icon reference
 resources/drawables/launcher_icon.png
 CarbBurn_WhitePaper.pdf              technical white paper (derivation + citations)
+CHANGELOG.md                         notable changes by release
 carb_curve.png                       Figure 1 — energy share vs power
 grams_curve.png                      Figure 2 — grams/hour vs power
 tools/simulate_fields.py             renders the simulated field screenshots
+tools/build_iq.sh                    exports a signed .iq for the Connect IQ Store
 simulated_field_small.png            simulated wide (3-column) field
 simulated_field_large.png            simulated full-screen grid field
 ```

@@ -1,13 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-    NOTE: If you create this project with the VS Code "Monkey C: New Project"
-    wizard, the extension generates the application "id" (a unique GUID) for you.
-    The id below is a placeholder that works fine for sideloading to your own
-    device; regenerate it before publishing to the Connect IQ Store.
--->
 <iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
     <iq:application entry="CarbBurnApp"
-                    id="b7e4c1a9f3d24e6cae10928f4c5d6a71"
+                    id="dbdc6f97393446e69bd4d71b3be8605e"
                     launcherIcon="@Drawables.LauncherIcon"
                     minApiLevel="3.1.0"
                     name="@Strings.AppName"

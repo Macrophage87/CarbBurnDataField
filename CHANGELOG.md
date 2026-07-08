@@ -3,11 +3,64 @@
 All notable changes to **Carb Burn** are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2] — 2026-07-08
+
+### Changed — color zones
+
+- **The zone color can no longer lag the numbers.** The color of the rolling
+  *carb g/h* and *carb %* readouts was previously driven by a separately smoothed
+  power stream, so it could briefly disagree with the rolling carb % shown next to
+  it. The color is now derived from the **same rolling values the field displays**:
+  red at 85% or more rolling carb energy (i.e. at or above FTP), orange at 50% or more.
+- **The blue "fat-max band" is now defined by grams/hour, not watts.** Blue shows
+  while the rolling fat oxidation rate is within **5%** of the modeled peak fat g/h
+  — "you're burning fat at close to your maximum rate" — instead of a ±10% watts
+  window around the fat-max power. Green covers the range between the top of the band
+  and the 50%-carb crossover; grey sits below the band. For the generic sample rider
+  (FTP 250 W, LT1 175 W) the steady-state boundaries are now roughly: grey under
+  130 W, blue 130–173 W, green 173–195 W, orange 195–250 W, red above 250 W (FTP).
+- **Better readability on light backgrounds.** The colored readouts use Garmin's
+  darker blue and green palette entries (`COLOR_DK_BLUE`, `COLOR_DK_GREEN`) on white
+  backgrounds; the bright variants are kept on black backgrounds where they read well.
+
+### Changed — FIT recording
+
+- **Per-record FIT fields now record rates, not totals.** The record-level developer
+  fields are `carb_rate` and `fat_rate` in **g/h** (the reconciled rolling oxidation
+  rates the field displays) instead of cumulative grams. A rate trace rises and falls
+  with intensity and charts far better in Garmin Connect and intervals.icu. The
+  session totals `total_carbohydrates` and `total_fat` (grams) are unchanged.
+
+### Changed — display
+
+- **Larger grid text on big screens.** On screens at least 550 px tall (e.g. Edge
+  1050, 480×800) the full-screen grid uses `FONT_LARGE` values, `FONT_SMALL` row
+  labels and `FONT_TINY` sub-labels instead of the small fonts sized for
+  282×470-class devices.
+
+### Fixed
+
+- **Real application GUID.** `manifest.xml` shipped with a placeholder id that Garmin
+  recorded as an all-zeros application id in FIT developer data, leaving the custom
+  fields unattributed. The manifest now carries a generated GUID
+  (`dbdc6f97393446e69bd4d71b3be8605e`).
+
+### Added
+
+- **One-command store export.** `tools/build_iq.sh` exports a signed release `.iq`
+  package (into `dist/`) using the installed Connect IQ SDK, generating a developer
+  key first if none exists.
+- **Simulated screenshots.** `tools/simulate_fields.py` ports the physiology model
+  and both main layouts to Python, replays a scripted 90-minute ride at 1 Hz, and
+  renders `simulated_field_small.png` and `simulated_field_large.png`, shown in the
+  README's "What it looks like" section.
+
 ## [1.0] — 2026-07-08
 
 Initial Connect IQ Store release.
 
 ### Added
+
 - Real-time **carbohydrate and fat oxidation** estimated from power, using FTP and
   (optional) LT1 via a logistic substrate-crossover model.
 - **Adaptive layout** by field shape: three core readouts side by side on small/wide
@@ -15,14 +68,11 @@ Initial Connect IQ Store release.
 - **Full-screen grid**: carb g/h, fat g/h and carb % as rolling / lap-average /
   overall-average; carbs spent; glycogen remaining (g and %); and the fat-max,
   50% crossover, and fueling-equilibrium wattages.
-- **Rolling** carb g/h and carb % on a shared smoothing interval.
-- **Power-zone color coding** of the rolling readouts: grey below the fat-max band,
-  blue in the fat-max band (fat within 5% of peak), green to the 50% crossover,
-  orange to FTP, red above FTP.
+- **Rolling** carb g/h and carb % on a shared smoothing interval, with power-zone
+  color coding.
 - **Fueling-equilibrium power** (`carbIntake` setting) — the power where modeled carb
-  burn equals your carb intake; below it you spare glycogen, above it you deplete.
-- **FIT recording** of cumulative carbohydrate and fat grams (per-record time series
-  and session totals) via FitContributor.
+  burn equals your carb intake.
+- **FIT recording** of carbohydrate and fat via FitContributor.
 - Garmin **calorie cross-check** and body-weight **glycogen gauge**.
 - Settings: FTP, LT1, gross efficiency, body weight, carb intake.
 - Technical **white paper** (derivations + citations) and store assets.

@@ -37,7 +37,9 @@ COLOR_BLACK = (0, 0, 0)
 COLOR_LT_GRAY = (170, 170, 170)
 COLOR_DK_GRAY = (85, 85, 85)
 COLOR_BLUE = (0, 170, 255)
+COLOR_DK_BLUE = (0, 0, 255)
 COLOR_GREEN = (0, 255, 0)
+COLOR_DK_GREEN = (0, 170, 0)
 COLOR_ORANGE = (255, 85, 0)
 COLOR_RED = (255, 0, 0)
 
@@ -77,10 +79,10 @@ class CarbBurnModel:
                 break
         self.equil_w = eq_p if eq_p else 600
 
-        # Colour-zone thresholds.
-        self.z_blue_lo = self.fat_max_w * 0.90
-        self.z_blue_hi = self.fat_max_w * 1.10
-        self.z_red = self.p50 + 2.19722 / self.k  # choFraction = 0.90
+        # Colour-zone anchors: peak fat g/h and carb % at fat-max.
+        self.fat_max_rate = ((1.0 - self.cho_fraction(self.fat_max_w))
+                             * (self.fat_max_w / ge) / J_PER_KCAL * 3600.0 / KCAL_PER_G_FAT)
+        self.pct_fat_max = self.cho_fraction(self.fat_max_w) * 100.0
 
         self.reset_session()
 
@@ -109,16 +111,17 @@ class CarbBurnModel:
         metabolic_w = power / self.ge
         return self.cho_fraction(power) * metabolic_w / J_PER_KCAL * 3600.0 / KCAL_PER_G
 
-    def zone_color(self, power, grey):
-        if power < self.z_blue_lo:
-            return grey
-        if power < self.z_blue_hi:
-            return COLOR_BLUE
-        if power < self.p50:
-            return COLOR_GREEN
-        if power < self.z_red:
+    def zone_color(self, grey, on_dark):
+        """Zone colour from the displayed rolling values (no lag)."""
+        if self.carb_pct_roll >= 90.0:
+            return COLOR_RED
+        if self.carb_pct_roll >= 50.0:
             return COLOR_ORANGE
-        return COLOR_RED
+        if self.fat_rate >= 0.95 * self.fat_max_rate:
+            return COLOR_BLUE if on_dark else COLOR_DK_BLUE
+        if self.carb_pct_roll >= self.pct_fat_max:
+            return COLOR_GREEN if on_dark else COLOR_DK_GREEN
+        return grey
 
     def compute(self, power, dt=1.0):
         """One compute() tick with the given current power (W)."""
@@ -243,7 +246,7 @@ def render_small(model, w=282, h=110, dark=True):
     bg = COLOR_BLACK if dark else COLOR_WHITE
     fg = COLOR_WHITE if dark else COLOR_BLACK
     grey = COLOR_LT_GRAY if dark else COLOR_DK_GRAY
-    zc = model.zone_color(model.power_roll, grey)
+    zc = model.zone_color(grey, dark)
 
     img, dr = new_canvas(w, h, bg)
 
@@ -276,7 +279,7 @@ def render_grid(model, w=282, h=470, dark=True):
     bg = COLOR_BLACK if dark else COLOR_WHITE
     fg = COLOR_WHITE if dark else COLOR_BLACK
     grey = COLOR_LT_GRAY if dark else COLOR_DK_GRAY
-    zc = model.zone_color(model.power_roll, grey)
+    zc = model.zone_color(grey, dark)
 
     img, dr = new_canvas(w, h, bg)
 
@@ -349,7 +352,9 @@ def main():
     simulate_ride(model)
 
     print("--- simulated state after 90 min ---")
-    print("rolling power  %.0f W (zone colour drives the coloured cells)" % model.power_roll)
+    print("rolling power  %.0f W" % model.power_roll)
+    print("zone colour from rolling carb %% (%.0f) and fat g/h (%.0f vs peak %.0f)"
+          % (model.carb_pct_roll, model.fat_rate, model.fat_max_rate))
     print("carbs total    %.0f g   fat total %.0f g" % (model.grams_cho, model.grams_fat))
     print("carb roll      %.0f g/h  fat roll  %.0f g/h" % (model.carb_rate, model.fat_rate))
     print("carb %% roll    %.0f     overall   %.0f" % (model.carb_pct_roll, model.pct_cho))
