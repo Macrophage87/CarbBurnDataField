@@ -85,6 +85,8 @@ counted as more carb-heavy), then integrated over the ride.
 ### The model, illustrated
 
 The charts below use a generic sample rider (FTP 250 W, LT1 175 W estimated, GE 21%).
+The shaded background bands are the app's pacing colour zones (grey → blue → green →
+orange → red; see [Colour zones](#colour-zones) above).
 
 **Energy share by power** — the carbohydrate/fat split. Carbs cross 50% of energy
 at the crossover point (~195 W here), between LT1 and FTP:
