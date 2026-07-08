@@ -3,7 +3,17 @@
 All notable changes to **Carb Burn** are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [1.2] — 2026-07-08
+## [1.3] — 2026-07-08
+
+### Changed
+
+- **Red zone now starts at your FTP.** Red previously began at the 90%-carb power,
+  which for most riders sits *above* FTP, so it rarely appeared. Red now begins at
+  FTP (the model's 85%-carb power) and flags efforts above your one-hour power. For
+  the generic sample rider (FTP 250 W) the orange band becomes 195–250 W and red is
+  above 250 W (previously orange 195–265 W, red above 265 W).
+
+## [1.2] — 2026-07-07
 
 ### Changed — color zones
 
@@ -11,14 +21,14 @@ All notable changes to **Carb Burn** are documented here. Format based on
   *carb g/h* and *carb %* readouts was previously driven by a separately smoothed
   power stream, so it could briefly disagree with the rolling carb % shown next to
   it. The color is now derived from the **same rolling values the field displays**:
-  red at 85% or more rolling carb energy (i.e. at or above FTP), orange at 50% or more.
+  red at 90% or more rolling carb energy, orange at 50% or more.
 - **The blue "fat-max band" is now defined by grams/hour, not watts.** Blue shows
   while the rolling fat oxidation rate is within **5%** of the modeled peak fat g/h
   — "you're burning fat at close to your maximum rate" — instead of a ±10% watts
   window around the fat-max power. Green covers the range between the top of the band
   and the 50%-carb crossover; grey sits below the band. For the generic sample rider
-  (FTP 250 W, LT1 175 W) the steady-state boundaries are now roughly: grey under
-  130 W, blue 130–173 W, green 173–195 W, orange 195–250 W, red above 250 W (FTP).
+  (FTP 250 W, LT1 175 W) the steady-state boundaries are roughly: grey under 130 W,
+  blue 130–173 W, green 173–195 W, orange 195–265 W, red above 265 W.
 - **Better readability on light backgrounds.** The colored readouts use Garmin's
   darker blue and green palette entries (`COLOR_DK_BLUE`, `COLOR_DK_GREEN`) on white
   backgrounds; the bright variants are kept on black backgrounds where they read well.
@@ -55,9 +65,9 @@ All notable changes to **Carb Burn** are documented here. Format based on
   renders `simulated_field_small.png` and `simulated_field_large.png`, shown in the
   README's "What it looks like" section.
 
-## [1.0] — 2026-07-08
+## [1.0] — 2026-07-04
 
-Initial Connect IQ Store release.
+Initial release.
 
 ### Added
 
@@ -79,5 +89,3 @@ Initial Connect IQ Store release.
 
 Supported devices: Edge 530/830/540/840/1030/1030 Plus/1040/1050/Explore 2,
 fēnix 6 Pro/7/8 Pro, Forerunner 955.
-
-[1.0]: https://github.com/Macrophage87/CarbBurnDataField/releases/tag/v1.0
