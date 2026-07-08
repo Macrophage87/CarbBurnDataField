@@ -33,32 +33,32 @@ and key wattages:
 
 ![Simulated large data field](simulated_field_large.png)
 
-### Colour zones
+### Color zones
 
-The rolling **carb g/h** and **carb %** are colour-coded by the current (smoothed)
+The rolling **carb g/h** and **carb %** are color-coded by the current (smoothed)
 power, so the numbers double as a pacing cue:
 
-- **grey** — well below fat-max (< 90% of fat-max)
-- **blue** — around fat-max (±10%)
-- **green** — fat-max up to the 50%-carb crossover
+- **grey** — below the fat-max band
+- **blue** — the fat-max band: within 5% (by grams) of peak fat oxidation
+- **green** — top of the fat-max band up to the 50%-carb crossover
 - **orange** — 50%-carb crossover up to the 90%-carb power
 - **red** — above the 90%-carb power (carbohydrate almost entirely dominant)
 
-All boundaries are derived from your own thresholds (fat-max, the 50%-carb
-crossover, and the 90%-carb power), so they scale per rider. For the generic
-sample rider (FTP 250 W, LT1 175 W) they fall at roughly:
+All boundaries are derived from your own thresholds (the fat-max band, the 50%-carb
+crossover, and the 90%-carb power), so they scale per rider. For the generic sample
+rider (FTP 250 W, LT1 175 W) they fall at roughly:
 
-| Zone | Power | Colour |
+| Zone | Power | Color |
 |---|---|---|
-| Well below fat-max | < 137 W | grey |
-| Around fat-max | 137–167 W | blue |
-| Fat-max → 50%-carb | 167–195 W | green |
+| Below the fat-max band | < 130 W | grey |
+| Fat-max band (fat within 5% of peak) | 130–173 W | blue |
+| Top of band → 50%-carb | 173–195 W | green |
 | 50%-carb → 90%-carb | 195–265 W | orange |
 | Above 90%-carb | > 265 W | red |
 
 Because the 90%-carb power usually sits above FTP, **red only appears during hard
 efforts above threshold.** The smoothed power (not the instantaneous value) drives
-the colour, so it transitions cleanly rather than flickering on surges.
+the color, so it transitions cleanly rather than flickering on surges.
 
 ### FIT recording
 
@@ -85,8 +85,8 @@ counted as more carb-heavy), then integrated over the ride.
 ### The model, illustrated
 
 The charts below use a generic sample rider (FTP 250 W, LT1 175 W estimated, GE 21%).
-The shaded background bands are the app's pacing colour zones (grey → blue → green →
-orange → red; see [Colour zones](#colour-zones) above).
+The shaded background bands are the app's pacing color zones (grey → blue → green →
+orange → red; see [Color zones](#color-zones) above).
 
 **Energy share by power** — the carbohydrate/fat split. Carbs cross 50% of energy
 at the crossover point (~195 W here), between LT1 and FTP:

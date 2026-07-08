@@ -45,9 +45,9 @@ class CarbBurnView extends WatchUi.DataField {
     private var mFatMaxW;   // power (W) that maximises fat oxidation rate
     private var mCarbIntake;// assumed carb intake during the ride, g/hr
     private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
-    private var mPowerRoll; // smoothed power (W) for zone colouring
-    private var mZBlueLo;   // fat-max * 0.90 (grey below)
-    private var mZBlueHi;   // fat-max * 1.10 (blue band around fat-max)
+    private var mPowerRoll; // smoothed power (W) for zone coloring
+    private var mZBlueLo;   // low edge of the fat-max band (fat within 5% of peak)
+    private var mZBlueHi;   // high edge of the fat-max band (fat within 5% of peak)
     private var mZRed;      // power where carb fraction hits 90% (red above)
 
     // ---- Session (overall) accumulators ----
@@ -227,17 +227,28 @@ class CarbBurnView extends WatchUi.DataField {
         if (eqP == 0) { eqP = 600; }   // intake exceeds burn even at 600 W
         mEquilW = eqP;
 
-        // Colour-zone thresholds (watts) for the rolling carb readouts.
-        mZBlueLo = mFatMaxW * 0.90;   // grey below this
-        mZBlueHi = mFatMaxW * 1.10;   // blue band around fat-max
+        // Color-zone thresholds (watts) for the rolling carb readouts.
+        // Blue = the fat-max band: powers where fat oxidation (proportional to
+        // power * fat-fraction) is within 5% by grams of its peak value.
+        var thr = bestScore * 0.95;
+        var lo = mFatMaxW;
+        var hi = mFatMaxW;
+        for (var pz = 30; pz <= pMax; pz += 2) {
+            if (pz * (1.0 - choFraction(pz)) >= thr) {
+                if (pz < lo) { lo = pz; }
+                if (pz > hi) { hi = pz; }
+            }
+        }
+        mZBlueLo = lo;
+        mZBlueHi = hi;
         // Red once the carb fraction exceeds 90%: choFraction(P)=0.90 solves to
         // P = P50 + logit(0.90)/k, with logit(0.90) = ln(9) = 2.19722.
         mZRed    = mP50 + 2.19722 / mK;
     }
 
-    // Colour for the rolling carb readouts from the (smoothed) power zone:
-    // grey well below fat-max, blue around fat-max, green up to the 50% crossover,
-    // orange up to the 90%-carb power, red above.
+    // Color for the rolling carb readouts from the (smoothed) power zone:
+    // grey below the fat-max band, blue within 5% of peak fat oxidation, green up
+    // to the 50% crossover, orange up to the 90%-carb power, red above.
     function zoneColor(power, greyColor) {
         if (power < mZBlueLo) { return greyColor; }
         if (power < mZBlueHi) { return Graphics.COLOR_BLUE; }
@@ -349,7 +360,7 @@ class CarbBurnView extends WatchUi.DataField {
         var h = dc.getHeight();
 
         // Field WIDER than tall: three core readouts side by side. Carb g/h and
-        // carb % are rolling and coloured by the current power zone.
+        // carb % are rolling and colored by the current power zone.
         if (w > h) {
             var hl = ["CARBS g", "CARB g/h", "CARB %"];
             var hv = [ mGramsCho.format("%.0f"),
@@ -369,7 +380,7 @@ class CarbBurnView extends WatchUi.DataField {
         }
 
         // Otherwise a short vertical stack (carb g/h and carb % are rolling +
-        // colour-coded).
+        // color-coded).
         var labels;
         var values;
         var colors;
@@ -388,7 +399,7 @@ class CarbBurnView extends WatchUi.DataField {
     }
 
     // Side-by-side columns, one readout per column (fields wider than tall).
-    // colors[i] is the colour for value i (labels stay in fg).
+    // colors[i] is the color for value i (labels stay in fg).
     function drawHorizontal(dc, fg, w, h, labels, values, colors, n) {
         var colW = w / n;
         var numFont = Graphics.FONT_NUMBER_MILD;
@@ -441,7 +452,7 @@ class CarbBurnView extends WatchUi.DataField {
     }
 
     // Full-screen grid: 5 rows x (label + 3 cells). The rolling carb g/h and
-    // carb % values (roll column of rows 0 and 2) are coloured by power zone (zc).
+    // carb % values (roll column of rows 0 and 2) are colored by power zone (zc).
     function drawGrid(dc, fg, zc, w, h) {
         var recon = reconFactor();
         var ovH  = mTotalSec / 3600.0;
@@ -512,7 +523,7 @@ class CarbBurnView extends WatchUi.DataField {
                 dc.setColor(fg, Graphics.COLOR_TRANSPARENT);
                 dc.drawText(cx, blockTop, fSub, subs[row][c],
                             Graphics.TEXT_JUSTIFY_CENTER);
-                // roll cells of CARB/h (row 0) and CARB% (row 2) get the zone colour
+                // roll cells of CARB/h (row 0) and CARB% (row 2) get the zone color
                 var vcol = ((c == 0) && ((row == 0) || (row == 2))) ? zc : fg;
                 dc.setColor(vcol, Graphics.COLOR_TRANSPARENT);
                 dc.drawText(cx, blockTop + subH, fVal, vals[row][c],
