@@ -11,7 +11,7 @@ The layout adapts to your data-screen slot:
 - Full screen: a rich grid with rolling / lap-average / overall-average for carb g/h, fat g/h and carb %, plus carbs spent, glycogen remaining (g and %), and three key wattages — fat-max, the 50% crossover, and your fueling-equilibrium power.
 
 COLOR-CODED PACING
-The rolling carb readouts change color by power zone: grey well below fat-max, blue around fat-max, green up to the 50% crossover, orange up to the 90%-carb power, and red above. One glance tells you which fuel system you're taxing.
+The rolling carb readouts change color by power zone: grey below the fat-max band, blue in the fat-max band, green up to the 50% crossover, orange up to the 80%-carb power, and red above. One glance tells you which fuel system you're taxing.
 
 FUELING EQUILIBRIUM
 Set your typical carb intake (default 60 g/h) and Carb Burn shows the power at which your carb burn equals your intake — the pace you can hold without draining glycogen. Below it you're sparing; above it you're depleting. Perfect for pacing long climbs and events.

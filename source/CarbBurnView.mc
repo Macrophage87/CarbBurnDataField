@@ -48,7 +48,7 @@ class CarbBurnView extends WatchUi.DataField {
     private var mPowerRoll; // smoothed power (W) for zone coloring
     private var mZBlueLo;   // low edge of the fat-max band (fat within 5% of peak)
     private var mZBlueHi;   // high edge of the fat-max band (fat within 5% of peak)
-    private var mZRed;      // power where carb fraction hits 90% (red above)
+    private var mZRed;      // power where carb fraction hits 80% (red above)
 
     // ---- Session (overall) accumulators ----
     private var mModelKcal;      // total metabolic kcal (power / GE)
@@ -241,14 +241,14 @@ class CarbBurnView extends WatchUi.DataField {
         }
         mZBlueLo = lo;
         mZBlueHi = hi;
-        // Red once the carb fraction exceeds 90%: choFraction(P)=0.90 solves to
-        // P = P50 + logit(0.90)/k, with logit(0.90) = ln(9) = 2.19722.
-        mZRed    = mP50 + 2.19722 / mK;
+        // Red once the carb fraction exceeds 80%: choFraction(P)=0.80 solves to
+        // P = P50 + logit(0.80)/k, with logit(0.80) = ln(4) = 1.38629.
+        mZRed    = mP50 + 1.38629 / mK;
     }
 
     // Color for the rolling carb readouts from the (smoothed) power zone:
     // grey below the fat-max band, blue within 5% of peak fat oxidation, green up
-    // to the 50% crossover, orange up to the 90%-carb power, red above.
+    // to the 50% crossover, orange up to the 80%-carb power, red above.
     function zoneColor(power, greyColor) {
         if (power < mZBlueLo) { return greyColor; }
         if (power < mZBlueHi) { return Graphics.COLOR_BLUE; }
