@@ -13,6 +13,13 @@ All notable changes to **Carb Burn** are documented here. Format based on
   the generic sample rider (FTP 250 W) the orange band becomes 195–250 W and red is
   above 250 W (previously orange 195–265 W, red above 265 W).
 
+### Fixed
+
+- **Restored the registered application id.** A commit had changed the manifest's
+  app id to a new GUID; it is back to the id this app is registered with on the
+  Connect IQ store (required for store updates and correct FIT developer-data
+  attribution).
+
 ## [1.2] — 2026-07-07
 
 ### Changed — color zones
@@ -47,13 +54,6 @@ All notable changes to **Carb Burn** are documented here. Format based on
   1050, 480×800) the full-screen grid uses `FONT_LARGE` values, `FONT_SMALL` row
   labels and `FONT_TINY` sub-labels instead of the small fonts sized for
   282×470-class devices.
-
-### Fixed
-
-- **Real application GUID.** `manifest.xml` shipped with a placeholder id that Garmin
-  recorded as an all-zeros application id in FIT developer data, leaving the custom
-  fields unattributed. The manifest now carries a generated GUID
-  (`dbdc6f97393446e69bd4d71b3be8605e`).
 
 ### Added
 

@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- The application id is the one this app is REGISTERED with on the Connect IQ
+     store. It must never change, or store updates are rejected and FIT
+     developer-data attribution breaks. -->
 <iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
     <iq:application entry="CarbBurnApp"
-                    id="dbdc6f97393446e69bd4d71b3be8605e"
+                    id="b7e4c1a9f3d24e6cae10928f4c5d6a71"
                     launcherIcon="@Drawables.LauncherIcon"
                     minApiLevel="3.1.0"
                     name="@Strings.AppName"
