@@ -1,0 +1,14 @@
+Version 1.0 - Initial release
+
+Carb Burn estimates your carbohydrate and fat burn in real time, straight from your power meter.
+
+What's included:
+- Live carbohydrate burn: grams, grams/hour, and % of energy from carbs
+- Rolling readouts color-coded by power zone: grey (easy), blue (fat-max), green (aerobic), orange (tempo to FTP), red (above FTP)
+- Full-screen grid: carb & fat g/h and carb % as rolling / lap / overall averages, plus carbs spent, glycogen remaining, fat-max, 50% crossover, and fueling-equilibrium wattages
+- Fueling-equilibrium power: the pace where carb burn matches your carb intake
+- Records carbohydrate and fat grams to the FIT file for post-ride analysis
+- Layout adapts automatically to any data-field size
+- Works from FTP alone (LT1 optional); set body weight to enable the glycogen gauge
+
+Requires a power meter and your FTP. Add the field to a data screen so it can compute and record.
