@@ -3,6 +3,19 @@
 All notable changes to **Carb Burn** are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **Speed-axis white-paper figure (Figure 3).** `tools/plot_speed_curves.py`
+  renders `speed_curves.png`: speed vs power, speed vs carb rate, and speed vs
+  carb %, over the 100–300 W range typical of long rides, for a flat road, a
+  5% climb, and rough Class 4 gravel (Crr 0.020). Speed uses the validated
+  Martin et al. (1998) power model (aero power ∝ v³). Each row auto-fits its own
+  speed scale (shared across the row) with a secondary mph axis; the curves are
+  colored by the field's power zones, with red starting at FTP. Shown in the
+  README.
+
 ## [1.3] — 2026-07-08
 
 ### Changed

@@ -106,6 +106,18 @@ because fat carries 9 kcal/g vs 4 kcal/g for carbohydrate:
 
 ![Carb and fat oxidation rate vs power](grams_curve.png)
 
+**Speed, not watts** — the same model on the axis a rider actually watches. Speed
+comes from the validated Martin et al. (1998) road-cycling power model (aero power
+scales with **v³**), for typical values (83 kg total, CdA 0.32 m², drivetrain 97%,
+still air), over the **100–300 W** range you can hold for long rides. The rows are
+a **flat road** (Crr 0.005), a **5% climb**, and rough **Class 4 gravel**
+(Crr 0.020, ~4× the rolling resistance); each shows speed vs power, speed vs carb
+rate, and speed vs carb %, so "carbs at X watts" becomes "carbs at X km/h" (mph on
+the right axis). Each row auto-fits its own speed scale, and each curve is colored
+by the same power zones the field uses (red begins at FTP):
+
+![Speed vs power, carb rate and carb %, on the flat, a climb and gravel](speed_curves.png)
+
 A full derivation with citations is in **CarbBurn_WhitePaper.pdf**.
 
 ### If you have no LT1 test
@@ -180,7 +192,9 @@ CarbBurn_WhitePaper.pdf              technical white paper (derivation + citatio
 CHANGELOG.md                         notable changes by release
 carb_curve.png                       Figure 1 — energy share vs power
 grams_curve.png                      Figure 2 — grams/hour vs power
+speed_curves.png                     Figure 3 — speed vs power / carb rate / carb % (flat, climb, gravel)
 tools/simulate_fields.py             renders the simulated field screenshots
+tools/plot_speed_curves.py           renders the speed-axis white-paper figure
 tools/build_iq.sh                    exports a signed .iq for the Connect IQ Store
 simulated_field_small.png            simulated wide (3-column) field
 simulated_field_large.png            simulated full-screen grid field
