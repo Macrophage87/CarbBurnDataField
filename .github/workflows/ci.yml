@@ -119,7 +119,6 @@ jobs:
   #    always-green check, the execution job is left out until the headless-sim
   #    invocation is made reliable. Helpers remain for local/future use:
   #    scripts/run_ciq_tests.sh + scripts/check_ciq_tests.py (see docs/ci.md).
-          retention-days: 7
 
   # 4) release-build - container. Compile the NON-unit-test RELEASE artifact for
   #    every device (the build that actually ships) and export the store .iq.
