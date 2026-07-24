@@ -349,7 +349,12 @@ class CarbBurnView extends WatchUi.DataField {
                 // #7: also relax the rolling carb % in lockstep so it can't stay
                 // frozen high next to a ~0 rate (contradictory RED at 0 g/h) -
                 // but only after COAST_HOLD_N consecutive coast samples, so a
-                // brief power-meter dropout doesn't move the pacing color.
+                // brief power-meter dropout doesn't move the RED/ORANGE zones
+                // (both keyed off mCarbPctRoll). Note the hold does NOT cover
+                // the BLUE fat-max band, which keys off mFatRate - that decays
+                // from the first coast sample, so a single dropout can drop out
+                // of BLUE. COAST_HOLD_N counts SAMPLES, not seconds: on a
+                // throttled cadence (dt=2) the hold spans ~2x the wall time.
                 mCoastN += 1;
                 mCarbRate = mCarbRate + aSteady * (0.0 - mCarbRate);
                 mFatRate  = mFatRate  + aSteady * (0.0 - mFatRate);

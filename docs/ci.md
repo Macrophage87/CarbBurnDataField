@@ -95,14 +95,58 @@ future fix:
   parser: passes only when `ran == passed`, `failed == 0`, `errors == 0`,
   `ran > 0`.
 
-**To wire execution once the hang is resolved:** add a `run-tests` container job
-that compiles one device `--unit-test`, runs `scripts/run_ciq_tests.sh`, then
-`scripts/check_ciq_tests.py sim-run.log`; keep it a **separate** job from
-`compile-unit-test`. Once it's shown to run reliably green, add `run-tests` to
-`ci-required.needs` — the gate iterates `needs`, so that single addition
-enforces it, provided the job runs unconditionally (no job-level `if:`).
+**Local run** (with the SDK installed): compile one device with `--unit-test`,
+then `scripts/run_ciq_tests.sh bin/CarbBurn-test-<device>.prg <device>` and
+`python3 scripts/check_ciq_tests.py sim-run.log`.
 
-The job definition lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
-(`run-tests`). If the headless simulator proves flaky in practice, mark the job
-`continue-on-error: true` (keeping it out of `ci-required.needs`) rather than
-letting an unreliable check block merges.
+**To wire execution once the hang is resolved:** paste the stanza below into
+`ci.yml` (it is *not* currently present — the `monkeydo` hang above is why), keep
+it a **separate** job from `compile-unit-test` so a simulator flake can't mask a
+compile regression, and only once it's shown to run reliably green add
+`run-tests` to `ci-required.needs` — the gate iterates `needs`, so that single
+addition enforces it, provided the job runs unconditionally (no job-level `if:`).
+If it proves merely flaky rather than hanging, `continue-on-error: true` (out of
+`ci-required.needs`) is the intermediate step.
+
+```yaml
+  run-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
+    env:
+      TEST_DEVICE: edge840   # one representative device; the (:test) suite is device-independent
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install headless-sim deps (guarded)
+        run: |
+          set -eu   # container image has no bash; steps run under dash - no pipefail
+          need=""
+          for p in bash xvfb x11-utils iproute2 procps openssl; do
+            dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"
+          done
+          if [ -n "$need" ]; then apt-get update && apt-get install -y $need; fi
+      - name: Generate throwaway developer key
+        run: |
+          set -eu
+          openssl genrsa -out developer_key.pem 4096
+          openssl pkcs8 -topk8 -inform PEM -outform DER -in developer_key.pem -out developer_key.der -nocrypt
+      - name: Compile one device --unit-test
+        run: |
+          set -eu
+          MONKEYC="$(command -v monkeyc || echo /connectiq/bin/monkeyc)"
+          mkdir -p bin
+          "$MONKEYC" -f monkey.jungle -o "bin/CarbBurn-test-$TEST_DEVICE.prg" \
+            -y developer_key.der -d "$TEST_DEVICE" --unit-test -w
+      - name: Run tests headlessly
+        run: scripts/run_ciq_tests.sh "bin/CarbBurn-test-$TEST_DEVICE.prg" "$TEST_DEVICE"
+      - name: Assert results (fail-closed)
+        run: python3 scripts/check_ciq_tests.py sim-run.log
+      - name: Upload simulator log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sim-run-log
+          path: sim-run.log
+          if-no-files-found: warn
+```
