@@ -20,6 +20,7 @@ stock GitHub-hosted `ubuntu-latest`:
 | `manifest-lint` | no | ✅ | Fails if the manifest app id is missing/placeholder/malformed. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
 | `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
+| `run-tests` | — | not wired (measured) | Headless `(:test)` **execution** is not a CI job: with the constructor abort already fixed, `monkeydo` still timed out in this container (run `30129233091`, `rc=124`) — see below. The suite's **compilation** is gated regardless by `compile-unit-test` (13 devices). |
 | `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
 | `advisory-lint` | no | ⚠️ advisory | `continue-on-error`, out of `ci-required.needs`. Flags `System.println` / `TODO` / `FIXME` as annotations. Never blocks a merge. |
 
@@ -66,43 +67,77 @@ a new device product id isn't in SDK 9.2.0):
 1. Find a newer `ghcr.io/matco/connectiq-tester` tag that ships the device.
 2. Resolve its digest: `docker pull ghcr.io/matco/connectiq-tester:<tag>` then
    `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/matco/connectiq-tester:<tag>`.
-3. Replace **both** `env.CIQ_IMAGE` and the two `container.image` values in
-   `ci.yml` with the new `@sha256:...`, and update the `# vX.Y.Z = SDK ...`
-   comment. The digest is the pin; the tag lives only in the comment.
+3. Replace **every** `container.image` value in `ci.yml` (currently two:
+   `compile-unit-test` and `release-build`) with the new `@sha256:...`, and update
+   the `# vX.Y.Z = SDK ...` comment. The digest is the pin; the tag lives only in
+   the comment. There is deliberately no `env` copy of the digest —
+   `container.image` cannot read the `env` context, so an `env` entry would be a
+   dead pin free to drift out of sync. If you re-add the `run-tests` stanza
+   below, its image needs the same bump.
 
-## Running / enabling unit tests (`run-tests`)
+## Unit tests
 
-This repo currently ships **no `(:test)` functions**, so there is nothing to
-execute headlessly and the `run-tests` job is intentionally omitted from
-`ci.yml`. The headless-simulator tooling is already in place for the moment
-tests are added (and for running them locally):
+The repo ships `(:test)` functions (`source/CarbBurnTest.mc`, the epic #22
+rolling-metrics suite). Their **compilation is CI-gated**: `compile-unit-test`
+builds `--unit-test` for all 13 devices on every PR (in `ci-required.needs`), so
+a test that doesn't compile fails a required check.
+
+**Headless execution is not wired — and we now know why, by measurement.**
+
+The first two attempts at a `run-tests` job timed out: `monkeydo` launched the
+simulator and never returned results. #28 found a more parsimonious explanation
+than "the container is broken" — both of those runs executed a `.prg` in which
+*every* test aborted in the view constructor, because each `new CarbBurnView()`
+re-registered FIT developer-field ids 0–3, and `createField()` aborts
+(uncatchably) on a duplicate id. Under `Xvfb`, with nobody to dismiss a fault
+dialog, that presents as a hang.
+
+**That hypothesis has now been tested and is insufficient.** The
+`(:debug) class CbvTest` seam in `source/CarbBurnTest.mc` eliminates the abort
+(the same seam produced 10/10 PASS on a developer machine, #28). The job was
+re-wired here *with* the seam in place, and `monkeydo` **still** timed out with
+no test output — run
+[`30129233091`](https://github.com/Macrophage87/CarbBurnDataField/actions/runs/30129233091),
+job `89599813195`, `rc=124`, head `acd3328`, `sim-run.log` uploaded and empty of
+results.
+
+**Conclusion: there are two independent problems.** The constructor abort (fixed)
+and the container headless path (open, owned by #28). The job has been removed
+again rather than left permanently red on every PR — it produced the finding it
+was wired to produce. Re-wiring is a copy-paste from the stanza below the moment
+#28 lands.
+
+The tooling:
 
 - [`scripts/run_ciq_tests.sh`](../scripts/run_ciq_tests.sh) — launches the
   simulator once under `Xvfb`, probes port `1234` for readiness, runs
-  `monkeydo <prg> <device> -t` under a hard `timeout`, and tees everything to
-  `sim-run.log`. Belt-and-suspenders `pkill` at entry.
+  `monkeydo <prg> <device> -t` under a hard `timeout` (`SIGTERM` first, plus
+  `stdbuf -oL` line-buffering, so a timeout **preserves** whatever was printed
+  instead of discarding it in a 4 KB pipe buffer), tees to `sim-run.log`.
 - [`scripts/check_ciq_tests.py`](../scripts/check_ciq_tests.py) — a **fail-closed**
-  parser: it ignores the runner exit code and passes only when
-  `ran == passed`, `failed == 0`, `errors == 0`, and `ran > 0`.
+  parser: passes only when `ran == passed`, `failed == 0`, `errors == 0`,
+  `ran > 0`.
 
-To enable `run-tests`:
+**Local run** (with the SDK installed): compile one device with `--unit-test`,
+then `scripts/run_ciq_tests.sh bin/CarbBurn-test-<device>.prg <device>` and
+`python3 scripts/check_ciq_tests.py sim-run.log`.
 
-1. Add one or more `(:test)` functions (e.g. `source/CarbBurnTest.mc`). Pure
-   tests are device-independent, so a single representative device is enough.
-2. Add the job below to `ci.yml`, and add `run-tests` to `ci-required.needs`.
-   The `ci-required` gate iterates `needs`, so that single addition enforces it —
-   no second edit. Per the contract above, `run-tests` must run **unconditionally**
-   on every PR (no job-level `if:`); the gate treats a skip as a failure.
-3. Keep it a **separate** job from `compile-unit-test` so a simulator flake
-   can't mask a compile regression.
+**To re-wire once #28 fixes the container path:** paste the stanza below into
+`ci.yml`, keeping it a **separate** job from `compile-unit-test` so a simulator
+flake can't mask a compile regression. Start as `continue-on-error` (out of
+`ci-required.needs`); once it is shown to run reliably green, drop that and add
+`run-tests` to `ci-required.needs` — the gate iterates `needs`, so that single
+addition enforces it, provided the job runs unconditionally (no job-level `if:`).
 
 ```yaml
   run-tests:
     runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 20
     container:
       image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
     env:
-      TEST_DEVICE: edge840   # one representative device; pure tests are device-independent
+      TEST_DEVICE: edge840   # one representative device; the (:test) suite is device-independent
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install headless-sim deps (guarded)
@@ -115,12 +150,12 @@ To enable `run-tests`:
           if [ -n "$need" ]; then apt-get update && apt-get install -y $need; fi
       - name: Generate throwaway developer key
         run: |
-          set -eu   # container image has no bash; steps run under dash - no pipefail
+          set -eu
           openssl genrsa -out developer_key.pem 4096
           openssl pkcs8 -topk8 -inform PEM -outform DER -in developer_key.pem -out developer_key.der -nocrypt
       - name: Compile one device --unit-test
         run: |
-          set -eu   # container image has no bash; steps run under dash - no pipefail
+          set -eu
           MONKEYC="$(command -v monkeyc || echo /connectiq/bin/monkeyc)"
           mkdir -p bin
           "$MONKEYC" -f monkey.jungle -o "bin/CarbBurn-test-$TEST_DEVICE.prg" \
@@ -137,7 +172,3 @@ To enable `run-tests`:
           path: sim-run.log
           if-no-files-found: warn
 ```
-
-Until `run-tests` has been shown to reliably run **green** (a real RED/GREEN
-differential against an added test), keep any headless "boot smoke" step
-advisory (`continue-on-error`, out of `ci-required.needs`).

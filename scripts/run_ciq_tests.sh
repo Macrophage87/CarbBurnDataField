@@ -11,9 +11,8 @@
 # This script does NOT decide pass/fail from the runner exit code (the sim can
 # exit 0 on a broken run). Parse sim-run.log with scripts/check_ciq_tests.py.
 #
-# NOTE: this repo currently ships no (:test) functions, so the CI run-tests job
-# is not wired up yet - see docs/ci.md. This script is the ready-to-use helper
-# for the moment tests are added (and for running them locally).
+# The repo ships (:test) functions in source/CarbBurnTest.mc; see docs/ci.md for
+# the CI wiring status of the run-tests job.
 set -uo pipefail
 
 PRG=${1:?usage: run_ciq_tests.sh <test.prg> <device> [display] [timeout_secs]}
@@ -95,14 +94,25 @@ fi
 log "simulator ready (pid $SIM_PID)"
 
 # ---- run the tests under a HARD timeout so a hang fails fast ----
+#
+# Evidence preservation matters more than speed of death here. The previous
+# form (`timeout --signal=KILL ... | tee`) block-buffered ~4 KB - larger than a
+# whole test transcript - so SIGKILL discarded every line even when tests HAD
+# run, which is why the first hang produced zero bytes and told us nothing.
+# Now: line-buffer with stdbuf so each line reaches the log as it is produced,
+# and send TERM first (with --kill-after as the backstop) so the process gets a
+# chance to flush.
 log "running: monkeydo $PRG $DEVICE -t  (timeout ${RUN_TIMEOUT}s)"
 set -o pipefail
-timeout --signal=KILL "$RUN_TIMEOUT" "$MONKEYDO" "$PRG" "$DEVICE" -t 2>&1 | tee -a "$LOG"
+timeout --signal=TERM --kill-after=15s "$RUN_TIMEOUT" \
+  stdbuf -oL -eL "$MONKEYDO" "$PRG" "$DEVICE" -t 2>&1 | tee -a "$LOG"
 rc=${PIPESTATUS[0]}
 log "monkeydo raw exit code = $rc (NOT trusted for pass/fail; parse $LOG)"
 
-if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-  log "FATAL: monkeydo TIMED OUT after ${RUN_TIMEOUT}s"
+if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] || [ "$rc" -eq 143 ]; then
+  # 124 = timeout fired, 143 = child took SIGTERM, 137 = --kill-after SIGKILL.
+  log "FATAL: monkeydo TIMED OUT after ${RUN_TIMEOUT}s (rc=$rc)"
+  log "any output captured before the timeout is above / in $LOG"
   exit 4
 fi
 
