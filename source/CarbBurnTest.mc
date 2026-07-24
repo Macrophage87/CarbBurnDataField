@@ -57,6 +57,24 @@ function cbvWarmView(power, n) {
     return v;
 }
 
+// -------- harness liveness probe --------
+
+// mkInfo() assumes Activity.Info is constructible here and its fields writable.
+// Compiling only proves the symbol resolves. This runs FIRST so that, if the
+// assumption is false, one test names the cause instead of eight erroring
+// mysteriously downstream.
+(:test)
+function test_activity_info_is_writable(logger) {
+    var info = new Activity.Info();
+    info.currentPower = 123;
+    info.timerTime    = 4567;
+    info.calories     = 89;
+    var ok = (info.currentPower == 123) && (info.timerTime == 4567) && (info.calories == 89);
+    logger.debug("Activity.Info writable=" + ok + " power=" + info.currentPower
+                 + " timerTime=" + info.timerTime + " calories=" + info.calories);
+    return ok;
+}
+
 // -------- #8: warm-up seeding --------
 
 // First active sample seeds the EMA exactly (alpha 1.0), not 0.10*inst.
@@ -140,13 +158,20 @@ function test_steady_alpha_formula(logger) {
     var a1   = v.steadyAlpha(1.0);      // fast-path: exactly RATE_ALPHA (0.10)
     var a2   = v.steadyAlpha(2.0);      // 1 - 0.9^2  = 0.19
     var aHal = v.steadyAlpha(0.5);      // 1 - 0.9^.5 = 0.0513
-    var aBig = v.steadyAlpha(1000.0);   // -> 1.0, must stay clamped <= 1.0
+    var aBig = v.steadyAlpha(1000.0);   // pow underflows to 0 -> 1.0 (never exceeds it)
+    // For dt > 0, 1 - 0.9^dt is always < 1, so the UPPER clamp is defensive and
+    // unreachable; the LOWER clamp needs dt < 0 (1 - 0.9^-1 = -0.111 -> 0.0).
+    // Production can't produce dt <= 0 (compute() guards t > mLastTimerMs), so
+    // this is the only way to execute that branch.
+    var aNeg = v.steadyAlpha(-1.0);
     var ok1   = cbvRelEq(a1,   0.10,     0.000001);
     var ok2   = cbvRelEq(a2,   0.19,     0.0001);
     var okHal = cbvRelEq(aHal, 0.051317, 0.001);
     var okBig = (aBig <= 1.0) && (aBig >= 0.999);
-    logger.debug("a1=" + a1 + " a2=" + a2 + " aHalf=" + aHal + " aBig=" + aBig);
-    return ok1 && ok2 && okHal && okBig;
+    var okNeg = (aNeg == 0.0);          // clamped, not negative
+    logger.debug("a1=" + a1 + " a2=" + a2 + " aHalf=" + aHal + " aBig=" + aBig
+                 + " aNeg=" + aNeg);
+    return ok1 && ok2 && okHal && okBig && okNeg;
 }
 
 // Real-time invariance: one dt=2 step == two dt=1 steps.
@@ -190,8 +215,12 @@ function test_coast_brief_dropout_and_boundary(logger) {
                    && (v.mCoastN == 2);
     t += 1000; v.compute(mkInfo(0, t, null));          // coast 3, ZERO (mCoastN=3 >= N) -> decay
     var decaysAtN = (v.mCarbPctRoll < pctBefore) && (v.mCoastN == 3);
-    t += 1000; v.compute(mkInfo(null, t, null));       // coast 4 -> keeps decaying (not one-shot)
-    var keepsDecaying = (v.mCoastN == 4) && (v.mCarbPctRoll < pctBefore);
+    // Compare the NEXT sample against the value right after the N-th one, not
+    // against pctBefore: a one-shot (mCoastN == COAST_HOLD_N) implementation
+    // would leave this unchanged and must fail here.
+    var pctAtN = v.mCarbPctRoll;
+    t += 1000; v.compute(mkInfo(null, t, null));       // coast 4 -> must decay AGAIN
+    var keepsDecaying = (v.mCoastN == 4) && (v.mCarbPctRoll < pctAtN);
     logger.debug("redInit=" + redInit + " heldAtN1=" + heldAtN1 + " decaysAtN=" + decaysAtN
                  + " keepsDecaying=" + keepsDecaying + " pct=" + v.mCarbPctRoll);
     return redInit && heldAtN1 && decaysAtN && keepsDecaying;
