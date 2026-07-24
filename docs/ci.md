@@ -20,6 +20,7 @@ stock GitHub-hosted `ubuntu-latest`:
 | `manifest-lint` | no | ✅ | Fails if the manifest app id is missing/placeholder/malformed. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
 | `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
+| `run-tests` | yes | ⚠️ running, not yet gating | Executes the `(:test)` suite headlessly (`Xvfb` + `monkeydo`, fail-closed parser). Runs on every PR and uploads `sim-run.log`, but is **not yet in `ci-required.needs`** — a headless-sim job stays out of the required gate until it's shown to run reliably green, then it's promoted (it already runs unconditionally). The `(:test)` compilation is gated regardless, via `compile-unit-test`. |
 | `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
 | `advisory-lint` | no | ⚠️ advisory | `continue-on-error`, out of `ci-required.needs`. Flags `System.println` / `TODO` / `FIXME` as annotations. Never blocks a merge. |
 
@@ -70,12 +71,11 @@ a new device product id isn't in SDK 9.2.0):
    `ci.yml` with the new `@sha256:...`, and update the `# vX.Y.Z = SDK ...`
    comment. The digest is the pin; the tag lives only in the comment.
 
-## Running / enabling unit tests (`run-tests`)
+## Unit tests (`run-tests`)
 
-This repo currently ships **no `(:test)` functions**, so there is nothing to
-execute headlessly and the `run-tests` job is intentionally omitted from
-`ci.yml`. The headless-simulator tooling is already in place for the moment
-tests are added (and for running them locally):
+The repo now ships `(:test)` functions (`source/CarbBurnTest.mc`, the epic #22
+rolling-metrics suite), and the `run-tests` job **executes them headlessly** on
+every PR via:
 
 - [`scripts/run_ciq_tests.sh`](../scripts/run_ciq_tests.sh) — launches the
   simulator once under `Xvfb`, probes port `1234` for readiness, runs
@@ -85,59 +85,21 @@ tests are added (and for running them locally):
   parser: it ignores the runner exit code and passes only when
   `ran == passed`, `failed == 0`, `errors == 0`, and `ran > 0`.
 
-To enable `run-tests`:
+**Gating status:** `run-tests` runs and reports on every PR, but is **not yet in
+`ci-required.needs`** — a headless-sim job stays out of the required gate until
+it's shown to run reliably green (the repo's "keep flaky checks advisory until
+proven with a RED/GREEN differential" rule). The `(:test)` **compilation** is
+gated regardless, since `compile-unit-test` builds `--unit-test` for all 13
+devices.
 
-1. Add one or more `(:test)` functions (e.g. `source/CarbBurnTest.mc`). Pure
-   tests are device-independent, so a single representative device is enough.
-2. Add the job below to `ci.yml`, and add `run-tests` to `ci-required.needs`.
-   The `ci-required` gate iterates `needs`, so that single addition enforces it —
-   no second edit. Per the contract above, `run-tests` must run **unconditionally**
-   on every PR (no job-level `if:`); the gate treats a skip as a failure.
-3. Keep it a **separate** job from `compile-unit-test` so a simulator flake
-   can't mask a compile regression.
+**To promote it into the required gate** once it's proven reliably green: add
+`run-tests` to `ci-required.needs`. The gate iterates `needs`, so that single
+addition enforces it — no second edit. Per the contract above, `run-tests`
+already runs **unconditionally** on every PR (no job-level `if:`), so the
+gate's "a skip is a failure" rule is satisfied. Keep it a **separate** job from
+`compile-unit-test` so a simulator flake can't mask a compile regression.
 
-```yaml
-  run-tests:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
-    env:
-      TEST_DEVICE: edge840   # one representative device; pure tests are device-independent
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Install headless-sim deps (guarded)
-        run: |
-          set -eu   # container image has no bash; steps run under dash - no pipefail
-          need=""
-          for p in bash xvfb x11-utils iproute2 procps openssl; do
-            dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"
-          done
-          if [ -n "$need" ]; then apt-get update && apt-get install -y $need; fi
-      - name: Generate throwaway developer key
-        run: |
-          set -eu   # container image has no bash; steps run under dash - no pipefail
-          openssl genrsa -out developer_key.pem 4096
-          openssl pkcs8 -topk8 -inform PEM -outform DER -in developer_key.pem -out developer_key.der -nocrypt
-      - name: Compile one device --unit-test
-        run: |
-          set -eu   # container image has no bash; steps run under dash - no pipefail
-          MONKEYC="$(command -v monkeyc || echo /connectiq/bin/monkeyc)"
-          mkdir -p bin
-          "$MONKEYC" -f monkey.jungle -o "bin/CarbBurn-test-$TEST_DEVICE.prg" \
-            -y developer_key.der -d "$TEST_DEVICE" --unit-test -w
-      - name: Run tests headlessly
-        run: scripts/run_ciq_tests.sh "bin/CarbBurn-test-$TEST_DEVICE.prg" "$TEST_DEVICE"
-      - name: Assert results (fail-closed)
-        run: python3 scripts/check_ciq_tests.py sim-run.log
-      - name: Upload simulator log
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: sim-run-log
-          path: sim-run.log
-          if-no-files-found: warn
-```
-
-Until `run-tests` has been shown to reliably run **green** (a real RED/GREEN
-differential against an added test), keep any headless "boot smoke" step
-advisory (`continue-on-error`, out of `ci-required.needs`).
+The job definition lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
+(`run-tests`). If the headless simulator proves flaky in practice, mark the job
+`continue-on-error: true` (keeping it out of `ci-required.needs`) rather than
+letting an unreliable check block merges.

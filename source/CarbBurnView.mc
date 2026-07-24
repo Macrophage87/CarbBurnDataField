@@ -46,14 +46,14 @@ class CarbBurnView extends WatchUi.DataField {
     private var mFatMaxW;   // power (W) that maximises fat oxidation rate
     private var mCarbIntake;// assumed carb intake during the ride, g/hr
     private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
-    private var mFatMaxRate;// peak fat oxidation rate (g/h) at fat-max power
+    var mFatMaxRate;// peak fat oxidation rate (g/h) at fat-max power (not private: read by tests)
     private var mPctFatMax; // carb % of energy at fat-max power
 
-    // ---- Session (overall) accumulators ----
-    private var mModelKcal;      // total metabolic kcal (power / GE)
+    // ---- Session (overall) accumulators ---- (mModelKcal/mGarminKcal not private: tests drive reconFactor())
+    var mModelKcal;      // total metabolic kcal (power / GE)
     private var mModelCarbKcal;  // carb kcal
     private var mModelFatKcal;   // fat kcal
-    private var mGarminKcal;     // Garmin cumulative calories, for cross-check
+    var mGarminKcal;     // Garmin cumulative calories, for cross-check
     private var mTotalSec;       // total timer seconds (moving)
 
     // ---- Lap accumulators (reset on lap) ----
@@ -62,10 +62,12 @@ class CarbBurnView extends WatchUi.DataField {
     private var mLapFatKcal;
     private var mLapSec;
 
-    // ---- Rolling (EMA) values ----
-    private var mCarbRate;   // carb g/hr, smoothed
-    private var mFatRate;    // fat g/hr, smoothed
-    private var mCarbPctRoll;// carb % of energy, smoothed
+    // ---- Rolling (EMA) values ---- (not private: read by the unit tests)
+    var mCarbRate;   // carb g/hr, smoothed
+    var mFatRate;    // fat g/hr, smoothed
+    var mCarbPctRoll;// carb % of energy, smoothed
+    var mRollN;      // active-sample count for EMA warm-up seeding (0 = unseeded)
+    var mCoastN;     // consecutive coast-sample count (sustained-coast guard)
 
     private var mLastTimerMs;
 
@@ -88,7 +90,9 @@ class CarbBurnView extends WatchUi.DataField {
     private const KCAL_PER_G       = 4.0;    // carbohydrate energy yield
     private const KCAL_PER_G_FAT   = 9.0;    // fat energy yield
     private const GLYCOGEN_G_PER_KG = 8.0;   // approx total body glycogen store
-    private const RATE_ALPHA       = 0.10;   // EMA smoothing (shared by rate + %)
+    private const RATE_ALPHA       = 0.10;   // EMA smoothing at dt=1 s (shared by rate + %)
+    private const COAST_HOLD_N     = 3;      // consecutive coast samples before the rolling % relaxes
+    private const INST_PCT0        = 0.0;    // instantaneous carb % while coasting (choFraction(0) ~= 0)
 
     function initialize() {
         DataField.initialize();
@@ -108,10 +112,12 @@ class CarbBurnView extends WatchUi.DataField {
             {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "g"});
         mFitFatSes  = createField("total_fat", 3, FitContributor.DATA_TYPE_UINT16,
             {:mesgType => FitContributor.MESG_TYPE_SESSION, :units => "g"});
-        mFitCarbRec.setData(0);
-        mFitFatRec.setData(0);
-        mFitCarbSes.setData(0);
-        mFitFatSes.setData(0);
+        // createField can return null (e.g. permission unavailable, or a bare
+        // unit-test harness); guard so initialize() never throws there.
+        if (mFitCarbRec != null) { mFitCarbRec.setData(0); }
+        if (mFitFatRec  != null) { mFitFatRec.setData(0); }
+        if (mFitCarbSes != null) { mFitCarbSes.setData(0); }
+        if (mFitFatSes  != null) { mFitFatSes.setData(0); }
     }
 
     // Push the rolling rates (g/h) to the record fields and the cumulative
@@ -142,6 +148,8 @@ class CarbBurnView extends WatchUi.DataField {
         mCarbRate      = 0.0;
         mFatRate       = 0.0;
         mCarbPctRoll   = 0.0;
+        mRollN         = 0;    // re-arm EMA warm-up on every session reset
+        mCoastN        = 0;    // and the sustained-coast guard
         mLastTimerMs   = 0;
         mGramsCho      = 0.0;
         mGramsFat      = 0.0;
@@ -242,7 +250,11 @@ class CarbBurnView extends WatchUi.DataField {
     function zoneColor(greyColor, onDark) {
         if (mCarbPctRoll >= 85.0) { return Graphics.COLOR_RED; }
         if (mCarbPctRoll >= 50.0) { return Graphics.COLOR_ORANGE; }
-        if (mFatRate * reconFactor() >= 0.95 * mFatMaxRate) {
+        // #15: compare both sides on the SAME (un-reconciled model) scale.
+        // mFatMaxRate is the un-reconciled model peak; multiplying only the
+        // left side by reconFactor() (typically >1) widened the band. Reconciling
+        // both sides is algebraically identical (recon cancels), so drop it.
+        if (mFatRate >= 0.95 * mFatMaxRate) {
             return onDark ? Graphics.COLOR_BLUE : Graphics.COLOR_DK_BLUE;
         }
         if (mCarbPctRoll >= mPctFatMax) {
@@ -268,6 +280,20 @@ class CarbBurnView extends WatchUi.DataField {
         return 1.0 / (1.0 + Math.pow(E, -x));
     }
 
+    // #16: steady-state EMA alpha as a function of dt (seconds), so the
+    // smoothing time constant is fixed in REAL time, not per-call. The weight
+    // retained on the prior value is (1 - RATE_ALPHA)^dt (geometric decay). At
+    // dt = 1 s this is exactly RATE_ALPHA - the dt == 1.0 fast-path avoids any
+    // Math.pow round-off, so a strict-1 Hz device stays bit-identical to before;
+    // a throttled cadence (dt > 1) smooths over the same wall-clock window.
+    function steadyAlpha(dt) {
+        if (dt == 1.0) { return RATE_ALPHA; }
+        var a = 1.0 - Math.pow(1.0 - RATE_ALPHA, dt);
+        if (a < 0.0) { a = 0.0; }
+        if (a > 1.0) { a = 1.0; }
+        return a;
+    }
+
     function compute(info) {
         // dt from timerTime so pauses do not accumulate.
         var dt = 0.0;
@@ -283,6 +309,8 @@ class CarbBurnView extends WatchUi.DataField {
             mTotalSec += dt;
             mLapSec   += dt;
 
+            var aSteady = steadyAlpha(dt);   // #16: dt-aware steady EMA alpha
+
             if (info != null && info.currentPower != null && info.currentPower > 0) {
                 var p          = info.currentPower.toFloat();
                 var metabolicW = p / mGe;
@@ -297,19 +325,37 @@ class CarbBurnView extends WatchUi.DataField {
                 mLapCarbKcal += kcal * frac;
                 mLapFatKcal  += kcal * (1.0 - frac);
 
+                // #8 warm-up: seed the EMA to the first active sample (alpha 1.0
+                // at n=1), relaxing to the dt-aware steady alpha by n>=10 - so
+                // the rolling rates (and the FIT records) don't ramp up from 0
+                // over the first ~20-30 s of every session. Float division.
+                mRollN += 1;
+                mCoastN = 0;
+                var a = aSteady;
+                var warm = 1.0 / mRollN;
+                if (warm > a) { a = warm; }
+
                 // Rolling rates (g/hr) and carb %, all on the same EMA interval.
                 var kcalPerHr  = metabolicW / J_PER_KCAL * 3600.0;
                 var instCarb   = frac * kcalPerHr / KCAL_PER_G;
                 var instFat    = (1.0 - frac) * kcalPerHr / KCAL_PER_G_FAT;
                 var instPct    = frac * 100.0;
-                mCarbRate    = mCarbRate    + RATE_ALPHA * (instCarb - mCarbRate);
-                mFatRate     = mFatRate     + RATE_ALPHA * (instFat  - mFatRate);
-                mCarbPctRoll = mCarbPctRoll + RATE_ALPHA * (instPct  - mCarbPctRoll);
+                mCarbRate    = mCarbRate    + a * (instCarb - mCarbRate);
+                mFatRate     = mFatRate     + a * (instFat  - mFatRate);
+                mCarbPctRoll = mCarbPctRoll + a * (instPct  - mCarbPctRoll);
             } else {
-                // Coasting: decay the rolling rates toward zero; hold the
-                // % (a ratio is undefined with no substrate flux).
-                mCarbRate  = mCarbRate  + RATE_ALPHA * (0.0 - mCarbRate);
-                mFatRate   = mFatRate   + RATE_ALPHA * (0.0 - mFatRate);
+                // Coasting: decay the rolling rates toward zero on the steady
+                // (dt-aware) alpha - NOT the warm-up alpha (mRollN untouched).
+                // #7: also relax the rolling carb % in lockstep so it can't stay
+                // frozen high next to a ~0 rate (contradictory RED at 0 g/h) -
+                // but only after COAST_HOLD_N consecutive coast samples, so a
+                // brief power-meter dropout doesn't move the pacing color.
+                mCoastN += 1;
+                mCarbRate = mCarbRate + aSteady * (0.0 - mCarbRate);
+                mFatRate  = mFatRate  + aSteady * (0.0 - mFatRate);
+                if (mCoastN >= COAST_HOLD_N) {
+                    mCarbPctRoll = mCarbPctRoll + aSteady * (INST_PCT0 - mCarbPctRoll);
+                }
             }
         }
 
