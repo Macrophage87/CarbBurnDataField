@@ -97,7 +97,7 @@ To enable `run-tests`:
         run: |
           set -euo pipefail
           need=""
-          for p in xvfb x11-utils iproute2 procps openssl; do
+          for p in bash xvfb x11-utils iproute2 procps openssl; do
             dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"
           done
           if [ -n "$need" ]; then apt-get update && apt-get install -y $need; fi

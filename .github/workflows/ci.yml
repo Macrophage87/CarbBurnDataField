@@ -65,7 +65,7 @@ jobs:
 
       - name: Generate throwaway developer key
         run: |
-          set -euo pipefail
+          set -eu
           command -v openssl >/dev/null 2>&1 || { apt-get update && apt-get install -y openssl; }
           openssl genrsa -out developer_key.pem 4096
           openssl pkcs8 -topk8 -inform PEM -outform DER \
@@ -73,7 +73,7 @@ jobs:
 
       - name: Compile --unit-test for every device
         run: |
-          set -uo pipefail
+          set -u
           if command -v monkeyc >/dev/null 2>&1; then MONKEYC="$(command -v monkeyc)"
           elif [ -x /connectiq/bin/monkeyc ]; then MONKEYC=/connectiq/bin/monkeyc
           else MONKEYC="$(find / -type f -name monkeyc 2>/dev/null | head -1)"; fi
@@ -130,7 +130,7 @@ jobs:
 
       - name: Generate throwaway developer key
         run: |
-          set -euo pipefail
+          set -eu
           command -v openssl >/dev/null 2>&1 || { apt-get update && apt-get install -y openssl; }
           openssl genrsa -out developer_key.pem 4096
           openssl pkcs8 -topk8 -inform PEM -outform DER \
@@ -138,7 +138,7 @@ jobs:
 
       - name: Release-compile every device (gates the data-field memory budget)
         run: |
-          set -uo pipefail
+          set -u
           if command -v monkeyc >/dev/null 2>&1; then MONKEYC="$(command -v monkeyc)"
           elif [ -x /connectiq/bin/monkeyc ]; then MONKEYC=/connectiq/bin/monkeyc
           else MONKEYC="$(find / -type f -name monkeyc 2>/dev/null | head -1)"; fi
@@ -167,7 +167,7 @@ jobs:
 
       - name: Export the store package (.iq)
         run: |
-          set -euo pipefail
+          set -eu
           if command -v monkeyc >/dev/null 2>&1; then MONKEYC="$(command -v monkeyc)"
           elif [ -x /connectiq/bin/monkeyc ]; then MONKEYC=/connectiq/bin/monkeyc
           else MONKEYC="$(find / -type f -name monkeyc 2>/dev/null | head -1)"; fi
@@ -211,7 +211,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Flag debug leftovers / TODOs (advisory only)
         run: |
-          set -uo pipefail
+          set -u
           hits=0
           while IFS= read -r line; do
             echo "::warning::$line"
