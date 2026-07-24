@@ -95,7 +95,7 @@ To enable `run-tests`:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Install headless-sim deps (guarded)
         run: |
-          set -euo pipefail
+          set -eu   # container image has no bash; steps run under dash - no pipefail
           need=""
           for p in bash xvfb x11-utils iproute2 procps openssl; do
             dpkg -s "$p" >/dev/null 2>&1 || need="$need $p"
@@ -103,12 +103,12 @@ To enable `run-tests`:
           if [ -n "$need" ]; then apt-get update && apt-get install -y $need; fi
       - name: Generate throwaway developer key
         run: |
-          set -euo pipefail
+          set -eu   # container image has no bash; steps run under dash - no pipefail
           openssl genrsa -out developer_key.pem 4096
           openssl pkcs8 -topk8 -inform PEM -outform DER -in developer_key.pem -out developer_key.der -nocrypt
       - name: Compile one device --unit-test
         run: |
-          set -euo pipefail
+          set -eu   # container image has no bash; steps run under dash - no pipefail
           MONKEYC="$(command -v monkeyc || echo /connectiq/bin/monkeyc)"
           mkdir -p bin
           "$MONKEYC" -f monkey.jungle -o "bin/CarbBurn-test-$TEST_DEVICE.prg" \

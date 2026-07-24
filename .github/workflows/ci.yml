@@ -58,6 +58,7 @@ jobs:
   #    NOT fail the build - only a non-zero monkeyc exit does. No -l 3.
   compile-unit-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
     container:
       image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
     steps:
@@ -123,6 +124,7 @@ jobs:
   #    assertion (we do not merely log sizes).
   release-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
     container:
       image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
     steps:
