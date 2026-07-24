@@ -47,7 +47,7 @@ function cbvRelEq(a, b, rel) {
 // constant `power`, 1 Hz. Internal timer ends at (1000 + 1000*n) ms.
 (:debug)
 function cbvWarmView(power, n) {
-    var v = new CarbBurnView();
+    var v = new CbvTest();
     var t = 1000;
     v.compute(mkInfo(power, t, null));           // prime timer, dt=0
     for (var i = 0; i < n; i += 1) {
@@ -80,7 +80,7 @@ function test_activity_info_is_writable(logger) {
 // First active sample seeds the EMA exactly (alpha 1.0), not 0.10*inst.
 (:test)
 function test_warmup_seeds_first_sample(logger) {
-    var v = new CarbBurnView();
+    var v = new CbvTest();
     v.compute(mkInfo(200, 1000, null));          // prime (dt=0)
     v.compute(mkInfo(200, 2000, null));          // first active (dt=1)
     var expected = v.carbRateAt(200.0);
@@ -96,7 +96,7 @@ function test_warmup_seeds_first_sample(logger) {
 // seeds exactly. Covers both coast forms - null power AND power <= 0.
 (:test)
 function test_warmup_not_consumed_by_coast_prefix(logger) {
-    var v = new CarbBurnView();
+    var v = new CbvTest();
     v.compute(mkInfo(null, 1000, null));         // prime (dt=0)
     v.compute(mkInfo(null, 2000, null));         // coast, null power
     v.compute(mkInfo(0,    3000, null));         // coast, ZERO power (<= 0 path)
@@ -154,7 +154,7 @@ function test_steady_state_matches_fixed_alpha(logger) {
 // test steps at dt=1, which takes the fast-path).
 (:test)
 function test_steady_alpha_formula(logger) {
-    var v = new CarbBurnView();
+    var v = new CbvTest();
     var a1   = v.steadyAlpha(1.0);      // fast-path: exactly RATE_ALPHA (0.10)
     var a2   = v.steadyAlpha(2.0);      // 1 - 0.9^2  = 0.19
     var aHal = v.steadyAlpha(0.5);      // 1 - 0.9^.5 = 0.0513
@@ -252,7 +252,7 @@ function test_coast_sustained_and_resume(logger) {
 // dereferenced a null currentPower) and must not fabricate any flux.
 (:test)
 function test_coast_cold_start_null_and_zero(logger) {
-    var v = new CarbBurnView();
+    var v = new CbvTest();
     v.compute(mkInfo(null, 1000, null));               // prime, null power
     v.compute(mkInfo(null, 2000, null));               // coast, null, dt=1
     var afterNull = (v.mCoastN == 1);
@@ -272,7 +272,7 @@ function test_coast_cold_start_null_and_zero(logger) {
 // values, both below and above the 0.95*peak threshold.
 (:test)
 function test_zonecolor_recon_invariant(logger) {
-    var v = new CarbBurnView();
+    var v = new CbvTest();
     v.mCarbPctRoll = 10.0;                              // below ORANGE/RED so we reach the BLUE test
     var peak = v.mFatMaxRate;
 
@@ -295,4 +295,15 @@ function test_zonecolor_recon_invariant(logger) {
     logger.debug("below=" + below1 + "/" + below2 + "/" + below3
                  + " above=" + above1 + "/" + above2 + "/" + above3 + " peak=" + peak);
     return belowInvariant && aboveInvariant;
+}
+
+// Test seam (#28): the app's own CarbBurnView, created at startup, already owns
+// developer-field ids 0..3. A second registration of the same ids is a DUPLICATE
+// and raises an uncatchable System Error, so every test that constructed a real
+// CarbBurnView aborted before its first assertion. This (:debug) subclass simply
+// never re-registers; the no-op override wins from the parent constructor.
+(:debug)
+class CbvTest extends CarbBurnView {
+    function initialize() { CarbBurnView.initialize(); }
+    function createFitFields() { }
 }
