@@ -20,7 +20,7 @@ stock GitHub-hosted `ubuntu-latest`:
 | `manifest-lint` | no | ✅ | Fails if the manifest app id is missing/placeholder/malformed. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
 | `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
-| `run-tests` | yes | ⚠️ advisory (`continue-on-error`) | Attempts to execute the `(:test)` suite headlessly (`Xvfb` + `monkeydo`, fail-closed parser) and uploads `sim-run.log`. **Currently non-blocking:** headless `monkeydo` times out in this container (launches the sim but never returns results), so the job is `continue-on-error` and out of `ci-required.needs` until the invocation is made reliable. The `(:test)` **compilation** is gated regardless by `compile-unit-test` (all 13 devices). |
+| `run-tests` | — | not wired | Headless `(:test)` **execution** is not currently a CI job: `monkeydo` hangs in this container (launches the sim, never returns results). The `(:test)` suite's **compilation** is gated by `compile-unit-test` (all 13 devices). Execution helpers remain for local/future use — see below. |
 | `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
 | `advisory-lint` | no | ⚠️ advisory | `continue-on-error`, out of `ci-required.needs`. Flags `System.println` / `TODO` / `FIXME` as annotations. Never blocks a merge. |
 
@@ -71,33 +71,36 @@ a new device product id isn't in SDK 9.2.0):
    `ci.yml` with the new `@sha256:...`, and update the `# vX.Y.Z = SDK ...`
    comment. The digest is the pin; the tag lives only in the comment.
 
-## Unit tests (`run-tests`)
+## Unit tests
 
-The repo now ships `(:test)` functions (`source/CarbBurnTest.mc`, the epic #22
-rolling-metrics suite), and the `run-tests` job **executes them headlessly** on
-every PR via:
+The repo ships `(:test)` functions (`source/CarbBurnTest.mc`, the epic #22
+rolling-metrics suite). Their **compilation is CI-gated**: `compile-unit-test`
+builds `--unit-test` for all 13 devices on every PR (in `ci-required.needs`), so
+a test that doesn't compile fails a required check.
+
+**Headless *execution* is not currently wired into CI.** A `run-tests` job was
+attempted (`Xvfb` + the `connectiq` launcher + `monkeydo <prg> <device> -t`),
+but `monkeydo` **hangs in the `connectiq-tester` container** — it launches the
+simulator and never returns test results, hitting the hard `timeout`. Rather
+than ship a check that is perpetually red (or misleadingly always-green), the
+execution job is omitted until the headless-sim invocation is made reliable.
+
+The tooling is in place for a local run (with the Connect IQ SDK) or for a
+future fix:
 
 - [`scripts/run_ciq_tests.sh`](../scripts/run_ciq_tests.sh) — launches the
   simulator once under `Xvfb`, probes port `1234` for readiness, runs
-  `monkeydo <prg> <device> -t` under a hard `timeout`, and tees everything to
-  `sim-run.log`. Belt-and-suspenders `pkill` at entry.
+  `monkeydo <prg> <device> -t` under a hard `timeout`, tees to `sim-run.log`.
 - [`scripts/check_ciq_tests.py`](../scripts/check_ciq_tests.py) — a **fail-closed**
-  parser: it ignores the runner exit code and passes only when
-  `ran == passed`, `failed == 0`, `errors == 0`, and `ran > 0`.
+  parser: passes only when `ran == passed`, `failed == 0`, `errors == 0`,
+  `ran > 0`.
 
-**Gating status:** `run-tests` runs and reports on every PR, but is **not yet in
-`ci-required.needs`** — a headless-sim job stays out of the required gate until
-it's shown to run reliably green (the repo's "keep flaky checks advisory until
-proven with a RED/GREEN differential" rule). The `(:test)` **compilation** is
-gated regardless, since `compile-unit-test` builds `--unit-test` for all 13
-devices.
-
-**To promote it into the required gate** once it's proven reliably green: add
-`run-tests` to `ci-required.needs`. The gate iterates `needs`, so that single
-addition enforces it — no second edit. Per the contract above, `run-tests`
-already runs **unconditionally** on every PR (no job-level `if:`), so the
-gate's "a skip is a failure" rule is satisfied. Keep it a **separate** job from
-`compile-unit-test` so a simulator flake can't mask a compile regression.
+**To wire execution once the hang is resolved:** add a `run-tests` container job
+that compiles one device `--unit-test`, runs `scripts/run_ciq_tests.sh`, then
+`scripts/check_ciq_tests.py sim-run.log`; keep it a **separate** job from
+`compile-unit-test`. Once it's shown to run reliably green, add `run-tests` to
+`ci-required.needs` — the gate iterates `needs`, so that single addition
+enforces it, provided the job runs unconditionally (no job-level `if:`).
 
 The job definition lives in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)
 (`run-tests`). If the headless simulator proves flaky in practice, mark the job
