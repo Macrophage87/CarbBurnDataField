@@ -121,6 +121,12 @@ jobs:
   #    contract).
   run-tests:
     runs-on: ubuntu-latest
+    # ADVISORY: the headless monkeydo run currently times out in this image
+    # (launches the sim, never returns test results). Kept non-blocking and out
+    # of ci-required.needs until the headless-sim invocation is made reliable;
+    # the (:test) suite is still COMPILE-gated across all 13 devices by
+    # compile-unit-test. See docs/ci.md.
+    continue-on-error: true
     timeout-minutes: 20   # hard cap so a hung simulator fails fast instead of stalling the run
     container:
       image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
