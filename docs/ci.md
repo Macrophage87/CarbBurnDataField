@@ -20,7 +20,7 @@ stock GitHub-hosted `ubuntu-latest`:
 | `manifest-lint` | no | ✅ | Fails if the manifest app id is missing/placeholder/malformed. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
 | `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
-| `ci-required` | no | ✅ | Aggregator. `needs` all of the above and just echoes success. **This is the single status name to require in branch protection.** |
+| `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
 | `advisory-lint` | no | ⚠️ advisory | `continue-on-error`, out of `ci-required.needs`. Flags `System.println` / `TODO` / `FIXME` as annotations. Never blocks a merge. |
 
 The **device matrix equals the manifest `<iq:products>` list** (13 devices:
@@ -44,10 +44,19 @@ admin must configure branch protection on `main`:
    posts a status blocks *all* merges forever. If a previous CI check name was
    required, remove it from the required list once `ci-required` is in place.
 
-> Why `ci-required` and not the individual jobs? If any needed job fails,
-> `ci-required` is **skipped** (never "success"), so a required `ci-required`
-> context blocks the merge — while the set of underlying jobs can evolve without
-> touching branch protection.
+> Why `ci-required` and not the individual jobs? GitHub treats a **skipped**
+> required check as **passing**, so the aggregator does *not* rely on being
+> skipped. It runs on every PR (`if: always()`) and **fails** unless every job
+> in `needs` concluded `success` — a failed, skipped, or cancelled dependency
+> makes `ci-required` post a real `failure`, which is what blocks the merge.
+> Because the check iterates `needs`, the underlying jobs can evolve without
+> touching branch protection, provided the contract below holds.
+>
+> **Contract:** every job added to `ci-required.needs` MUST run unconditionally
+> on every PR (no job-level `if:`). The gate treats a skipped dependency as a
+> failure, so a legitimately-skipped required job would wedge merges. If a
+> genuinely conditional job is ever needed, switch the gate to an
+> `alls-green`-style action with an explicit allowed-skips list (SHA-pinned).
 
 ## Bumping the SDK image
 
@@ -81,6 +90,9 @@ To enable `run-tests`:
 1. Add one or more `(:test)` functions (e.g. `source/CarbBurnTest.mc`). Pure
    tests are device-independent, so a single representative device is enough.
 2. Add the job below to `ci.yml`, and add `run-tests` to `ci-required.needs`.
+   The `ci-required` gate iterates `needs`, so that single addition enforces it —
+   no second edit. Per the contract above, `run-tests` must run **unconditionally**
+   on every PR (no job-level `if:`); the gate treats a skip as a failure.
 3. Keep it a **separate** job from `compile-unit-test` so a simulator flake
    can't mask a compile regression.
 

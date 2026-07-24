@@ -194,14 +194,33 @@ jobs:
           retention-days: 7
 
   # 5) ci-required - the SINGLE stable status to require in branch protection.
-  #    It runs only if every needed job succeeded; if any fails, this job is
-  #    SKIPPED (never "success"), so a required `ci-required` context blocks the
-  #    merge. (No `if: always()` - that is the whole point.)
+  #    GitHub treats a SKIPPED required check as PASSED, so the aggregator must
+  #    RUN on every PR (if: always()) and post a real `failure` when anything
+  #    upstream is not `success` - a skipped/cancelled/failed dependency has to
+  #    make THIS job conclude `failure`, or a broken build merges. `needs` is
+  #    the gate: the check iterates toJSON(needs), so any job added to `needs`
+  #    is enforced automatically. Contract: every job in `needs` MUST run
+  #    unconditionally (no job-level `if:`), so a skip is always a real fault.
   ci-required:
     runs-on: ubuntu-latest
     needs: [manifest-lint, compile-unit-test, release-build]
+    if: always()
     steps:
-      - run: echo "All required Connect IQ CI jobs passed."
+      - name: Assert every required job succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -eu
+          printf '%s\n' "$NEEDS"
+          printf '%s' "$NEEDS" | python3 -c '
+          import json, sys
+          needs = json.load(sys.stdin)
+          bad = {k: v.get("result") for k, v in needs.items() if v.get("result") != "success"}
+          if bad:
+              print("::error::required job(s) did not succeed: %s" % bad)
+              sys.exit(1)
+          print("all required jobs succeeded: %s" % ", ".join(sorted(needs)))
+          '
 
   # ---- Optional advisory jobs (continue-on-error, OUT of ci-required.needs) ----
   # Never blocks a merge. Kept low-noise on purpose; anything flaky stays here
