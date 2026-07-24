@@ -189,9 +189,10 @@ function test_coast_brief_dropout_and_boundary(logger) {
                    && (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_RED)
                    && (v.mCoastN == 2);
     t += 1000; v.compute(mkInfo(0, t, null));          // coast 3, ZERO (mCoastN=3 >= N) -> decay
-    var decaysAtN = (v.mCarbPctRoll < pctBefore) && (v.mCoastN == 3);
+    var pctAtN = v.mCarbPctRoll;                       // NIT FIX: capture right after the N-th sample
+    var decaysAtN = (pctAtN < pctBefore) && (v.mCoastN == 3);
     t += 1000; v.compute(mkInfo(null, t, null));       // coast 4 -> keeps decaying (not one-shot)
-    var keepsDecaying = (v.mCoastN == 4) && (v.mCarbPctRoll < pctBefore);
+    var keepsDecaying = (v.mCoastN == 4) && (v.mCarbPctRoll < pctAtN);   // NIT FIX: vs post-N, not pre-coast
     logger.debug("redInit=" + redInit + " heldAtN1=" + heldAtN1 + " decaysAtN=" + decaysAtN
                  + " keepsDecaying=" + keepsDecaying + " pct=" + v.mCarbPctRoll);
     return redInit && heldAtN1 && decaysAtN && keepsDecaying;
@@ -278,3 +279,4 @@ class CbvTest extends CarbBurnView {
     function initialize() { CarbBurnView.initialize(); }
     function createFitFields() { }
 }
+
