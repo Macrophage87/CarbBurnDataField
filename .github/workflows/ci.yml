@@ -50,7 +50,10 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Validate manifest application id
-        run: python3 scripts/check_manifest_appid.py manifest.xml
+        run: |
+          python3 scripts/check_manifest_appid.py manifest.xml
+          echo "::error::THROWAWAY forced failure to prove the ci-required gate blocks (issue #6)"
+          exit 1
 
   # 2) compile-unit-test - container. Compile a --unit-test build for EVERY
   #    manifest device in ONE job so the image pulls once (not per-device).
@@ -58,6 +61,7 @@ jobs:
   #    NOT fail the build - only a non-zero monkeyc exit does. No -l 3.
   compile-unit-test:
     runs-on: ubuntu-latest
+    if: false   # THROWAWAY: skip the slow container job for the gate proof (issue #6)
     timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
     container:
       image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
@@ -124,6 +128,7 @@ jobs:
   #    assertion (we do not merely log sizes).
   release-build:
     runs-on: ubuntu-latest
+    if: false   # THROWAWAY: skip the slow container job for the gate proof (issue #6)
     timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
     container:
       image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
