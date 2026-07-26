@@ -50,7 +50,7 @@ class CarbBurnView extends WatchUi.DataField {
     private var mCarbIntake;// assumed carb intake during the ride, g/hr
     private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
     var mFatMaxRate;// peak fat oxidation rate (g/h) at fat-max power (not private: read by tests)
-    private var mPctFatMax; // carb % of energy at fat-max power
+    var mPctFatMax; // carb % at fat-max power = the GREEN threshold (not private: read by tests)
 
     // ---- Session (overall) accumulators ---- (mModelKcal/mGarminKcal not private: tests drive reconFactor())
     var mModelKcal;      // total metabolic kcal (power / GE)
@@ -418,15 +418,23 @@ class CarbBurnView extends WatchUi.DataField {
     // Garmin has removed the per-device glyph tables, while an unsupported glyph
     // renders as a filled BOX on Edge hardware. Rather than bet the sentinel on
     // that, draw any non-numeric value string in a text font (which is what
-    // drawGrid() has always done for its own NO_VALUE cells). The height is taken
-    // from whichever font actually draws, so the layout cannot drift.
+    // drawGrid() has always done for its own NO_VALUE cells).
+    //
+    // The substitute must FIT the slot the number font was measured for, so walk
+    // down the text faces and take the first that is no taller. Picking a fixed
+    // face does not work: drawVertical() uses FONT_TINY when a row is under 40 px,
+    // and FONT_SMALL is taller than that, so the value would be drawn above its
+    // slot and collide with the label - in the tightest layout, where there is
+    // least room to absorb it. FONT_XTINY is the floor (it is what the labels
+    // use, so it always fits).
     function valueFont(dc, s, numFont) {
         if (s.equals(NO_VALUE) == false) { return numFont; }
-        var alt = Graphics.FONT_MEDIUM;
-        if (dc.getFontHeight(alt) > dc.getFontHeight(numFont)) {
-            alt = Graphics.FONT_SMALL;
+        var budget = dc.getFontHeight(numFont);
+        var ladder = [Graphics.FONT_MEDIUM, Graphics.FONT_SMALL, Graphics.FONT_TINY];
+        for (var i = 0; i < ladder.size(); i += 1) {
+            if (dc.getFontHeight(ladder[i]) <= budget) { return ladder[i]; }
         }
-        return alt;
+        return Graphics.FONT_XTINY;
     }
 
     // Modelled carbohydrate oxidation rate at a given power, g/hr.

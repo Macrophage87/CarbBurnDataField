@@ -830,6 +830,57 @@ function test_compute_drives_red(logger) {
     return pctHigh && released && isRed && numeric;
 }
 
+// ORANGE, GREEN, and the ORDER of the branches - none of which had any coverage.
+// The gap matters beyond completeness: a pure REORDER of the RED and ORANGE tests
+// (which would make RED unreachable, since every RED value is also >= 50) changes
+// no literal and no expression, so neither the mutation-sensitive value tests nor
+// a source-literal diff can see it. A test at 90 and a test at 60 together can:
+// reorder them and the 90 arm returns ORANGE.
+//
+// The GREEN arm is asserted RELATIVE to mPctFatMax rather than at a fixed
+// percentage, because that threshold is a model output and ranges from 0.004 %
+// (ftp=421 / lt1=420) to 69.7 % (ftp=61 / lt1=1) across legal settings - so any
+// fixed number either misses the band or lands outside it depending on the
+// runner's settings, which is exactly the #34 defect. Where mPctFatMax >= 50 the
+// GREEN band is genuinely EMPTY (ORANGE pre-empts it), and the test asserts that
+// instead of pretending otherwise.
+(:test)
+function test_zone_branch_order_and_bands(logger) {
+    var v = cbvNewView();
+    v.mFluxLow = false;            // floor released; it has its own tests
+    v.mFatRate = 0.0;              // below the BLUE band
+
+    v.mCarbPctRoll = 90.0;
+    var red = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_RED);
+    v.mCarbPctRoll = 60.0;
+    var orange = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_ORANGE);
+    v.mCarbPctRoll = 85.0;         // the boundary itself is RED (>=, not >)
+    var redAtBoundary = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_RED);
+    v.mCarbPctRoll = 50.0;
+    var orangeAtBoundary = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_ORANGE);
+
+    var thr = v.mPctFatMax;
+    var greenOk;
+    var bandEmpty = (thr >= 49.0);
+    if (bandEmpty) {
+        // No room between mPctFatMax and 50: ORANGE owns the range.
+        v.mCarbPctRoll = 49.0;
+        greenOk = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) != Graphics.COLOR_GREEN);
+    } else {
+        v.mCarbPctRoll = thr + 0.5;
+        var above = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_GREEN);
+        var aboveLight = (v.zoneColor(Graphics.COLOR_DK_GRAY, false) == Graphics.COLOR_DK_GREEN);
+        // Just below the threshold there is nothing left to match: grey.
+        v.mCarbPctRoll = thr - 0.5;
+        var below = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_LT_GRAY);
+        greenOk = above && aboveLight && below;
+    }
+    logger.debug("red=" + red + " orange=" + orange + " redAtBoundary=" + redAtBoundary
+                 + " orangeAtBoundary=" + orangeAtBoundary + " greenOk=" + greenOk
+                 + " pctFatMax=" + thr + " bandEmpty=" + bandEmpty);
+    return red && orange && redAtBoundary && orangeAtBoundary && greenOk;
+}
+
 // -------- structural pin: the fat-max scan --------
 //
 // Every VALUE the model produces is checked against the model itself elsewhere

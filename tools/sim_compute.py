@@ -363,6 +363,22 @@ def run2(settings):
     check("compute_drives_red", v.pct>=85.0 and v.fluxLow==False and v.zoneColor()==RED
           and v.carbPctStr()!="--", f"pct={v.pct}")
 
+    # test_zone_branch_order_and_bands
+    v=View(**kw); v.fluxLow=False; v.fatRate=0.0
+    v.pct=90.0; z1=(v.zoneColor()==RED)
+    v.pct=60.0; z2=(v.zoneColor()==ORANGE)
+    v.pct=85.0; z3=(v.zoneColor()==RED)
+    v.pct=50.0; z4=(v.zoneColor()==ORANGE)
+    thr=v.pctFatMax; empty=(thr>=49.0)
+    if empty:
+        v.pct=49.0; z5=(v.zoneColor()!=GREEN)
+    else:
+        v.pct=f32(thr+0.5); a=(v.zoneColor()==GREEN)
+        v.pct=f32(thr-0.5); b=(v.zoneColor()==GREY)
+        z5=a and b
+    check("zone_branch_order", z1 and z2 and z3 and z4 and z5,
+          f"pctFatMax={thr:.4f} empty={empty}")
+
     # FIXED argmax pin
     v=View(**kw); w=v.fatMaxW
     def fs(pw): return f32(f32(pw)*f32(f32(1.0)-v.cho(pw)))
