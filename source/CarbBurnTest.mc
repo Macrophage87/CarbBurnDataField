@@ -91,6 +91,25 @@ function cbvRelEq(a, b, rel) {
     return d <= rel * m;
 }
 
+// Comparison with an EXPLICIT absolute window as well as a relative one, for
+// quantities that can legitimately be far below 1.0. cbvRelEq's m < 1.0 floor
+// turns any relative tolerance into an absolute one down there, which makes an
+// assertion vacuous: at ftp=600 / lt1=599 the carb % at 400 W is 9.4e-12, so
+// cbvRelEq(pct, target, 1e-4) admits 0.0 and would pass with the value deleted.
+// Here the absolute window is stated, so it can be chosen small enough to matter.
+(:debug)
+function cbvClose(a, b, absTol, relTol) {
+    var d = a - b;
+    if (d < 0.0) { d = -d; }
+    if (d <= absTol) { return true; }
+    var m = a;
+    if (m < 0.0) { m = -m; }
+    var mb = b;
+    if (mb < 0.0) { mb = -mb; }
+    if (mb > m) { m = mb; }
+    return d <= relTol * m;
+}
+
 // Fresh view primed at t=1000 (dt=0, no update), then `n` active samples at
 // constant `power`, 1 Hz. Internal timer ends at (1000 + 1000*n) ms.
 (:debug)
@@ -128,8 +147,18 @@ function test_activity_info_surface(logger) {
     info.currentPower = null;
     info.calories     = null;
     var nullable = (info.currentPower == null) && (info.calories == null);
-    logger.debug("writable=" + writable + " nullable=" + nullable);
-    return writable && nullable;
+    // #33's classifier reads currentSpeed / currentCadence, and mkInfoFull()
+    // assigns both - including null, which is the "unknown, do not suppress"
+    // case. Same contract guard as above.
+    info.currentSpeed   = 8.5;
+    info.currentCadence = 90;
+    var motionWritable = (info.currentSpeed == 8.5) && (info.currentCadence == 90);
+    info.currentSpeed   = null;
+    info.currentCadence = null;
+    var motionNullable = (info.currentSpeed == null) && (info.currentCadence == null);
+    logger.debug("writable=" + writable + " nullable=" + nullable
+                 + " motionWritable=" + motionWritable + " motionNullable=" + motionNullable);
+    return writable && nullable && motionWritable && motionNullable;
 }
 
 // -------- #8: warm-up seeding --------
@@ -356,10 +385,18 @@ function test_dropout_carry_and_grace_boundary(logger) {
     return carriedFlat && straddled && decayed && splitNotDropped;
 }
 
-// mNullSec is advanced BEFORE the carry is tested, and the carry is clamped to
-// the room left in the window - so one enormous sample cannot accrue phantom
-// pedalling for its whole duration. Asserted in energy, against the view's own
-// measured per-second accrual, so it holds at any legal settings.
+// The carry is clamped to the room LEFT in the window - `room = SIGNAL_GRACE_S -
+// mNullSec` reads the pre-increment mNullSec, and the increment plus the disarm
+// follow - so one enormous sample cannot accrue phantom pedalling for its whole
+// duration. Asserted in energy, against the view's own measured per-second
+// accrual, so it holds at any legal settings.
+//
+// The pre-increment reading is deliberate. #33's rules "increment then test" and
+// "clamp so a straddling dt is split" are in literal tension: post-increment,
+// a dt=300 sample gives room = -297.5 and the split is vacuous - the whole sample
+// coasts, which is indistinguishable from having no clamp at all. Pre-increment
+// is the only reading under which BOTH rules mean something, so that is what the
+// code does, and the straddle test above is what proves the split is real.
 (:test)
 function test_dropout_carry_bounded_on_one_long_sample(logger) {
     var v = cbvWarmView(400, 20);
@@ -386,14 +423,25 @@ function test_dropout_carry_bounded_on_one_long_sample(logger) {
     // the "percentage holds through a coast" property is pinned instead at a
     // duration where the rates stay representable (see the resume test).
     var ratesCollapsed = (v.mCarbRate < 0.02 * v.carbRateAt(400.0));
-    var pctGuarded     = (v.mCarbPctRoll == 0.0) && (v.mCarbPctRoll == v.mCarbPctRoll);
+    // NOT "== 0.0": whether both rates land on exactly zero depends on whether
+    // Math.pow and the EMA are evaluated in Float or Double (in Float,
+    // steadyAlpha(297.5) rounds to exactly 1.0; in Double the rates survive at
+    // ~2e-14 of instantaneous). The real intent is "defined and negligible", so
+    // assert that - with the self-equality that only NaN fails.
+    var pctAbs         = (v.mCarbPctRoll < 0.0) ? -v.mCarbPctRoll : v.mCarbPctRoll;
+    var pctGuarded     = (v.mCarbPctRoll == v.mCarbPctRoll)
+                         && ((pctAbs < 0.000001) || cbvRelEq(v.mCarbPctRoll, pctHeld, 0.0001));
     var floorEngaged   = (v.mFluxLow == true) && v.carbPctStr().equals("--");
     var greyNow        = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_LT_GRAY);
+    // The DISPLAYED rate is what #33's spec requires the fix to be asserted on:
+    // with no Garmin calorie feed recon is 1.0, so it must track mCarbRate.
+    var dispTracks = cbvClose(v.mRateDisp, v.mCarbRate, 0.000001, 0.0001);
     logger.debug("carried=" + carried + "s bounded=" + bounded + " pctBefore=" + pctHeld
                  + " ratesCollapsed=" + ratesCollapsed + " pctGuarded=" + pctGuarded
                  + " floorEngaged=" + floorEngaged + " grey=" + greyNow
+                 + " dispTracks=" + dispTracks
                  + " pct=" + v.mCarbPctRoll + " carbRate=" + v.mCarbRate);
-    return bounded && ratesCollapsed && pctGuarded && floorEngaged && greyNow;
+    return bounded && ratesCollapsed && pctGuarded && floorEngaged && greyNow && dispTracks;
 }
 
 // The carry re-arms only after CARRY_REARM_N consecutive ACTIVE samples, so a
@@ -436,6 +484,81 @@ function test_carry_rearm_requires_consecutive_active(logger) {
                  + " carriesAgain=" + carriesAgain);
     return notArmedYet && armed && disarmed && notRearmed && noPhantom
            && rearmed && carriesAgain;
+}
+
+// A MEASURED zero invalidates the carry, so a stale power cannot come back after
+// a coast. Without this, an hour of freewheeling at a reported 0 W leaves the
+// carry armed and mLastPower stale, and the next single missing reading revives
+// an hour-old power: the rates jump off zero, the flux crosses FLUX_RELEASE, and
+// the cell flips from "--" to a coloured number. Every other classifier test
+// here uses null gaps only, which is exactly why none of them caught it.
+(:test)
+function test_measured_zero_invalidates_carry(logger) {
+    var v = cbvWarmView(400, 20);                      // armed, mLastPower = 400
+    var armedBefore = (v.mCarryArmed == true);
+    var t = 21000;
+    // A long freewheel at a REPORTED zero, with speed still live (descending).
+    // 60 s, not 40: the flux has to fall below FLUX_ENGAGE for the floor arms
+    // below, and at the lowest legal gross efficiency the flux at 400 W is ~574
+    // g/h, which needs ~45 s of decay at alpha 0.10. 40 would red-light there.
+    for (var j = 0; j < 60; j += 1) { t += 1000; v.compute(mkInfoFull(0, t, null, 12.0, null)); }
+    var disarmed  = (v.mCarryArmed == false);
+    var floorLow  = (v.mFluxLow == true) && v.carbPctStr().equals("--");
+    var kcalBefore = v.mModelKcal;
+    var rateBefore = v.mCarbRate;
+    // ...then ONE missing reading, the common dropout shape.
+    t += 1000; v.compute(mkInfoFull(null, t, null, 12.0, null));
+    var noRevival = (v.mModelKcal == kcalBefore) && (v.mCarbRate <= rateBefore)
+                    && (v.mFluxLow == true) && v.carbPctStr().equals("--");
+    // And it takes CARRY_REARM_N real readings to trust the link again.
+    t += 1000; v.compute(mkInfo(400, t, null));
+    var oneNotEnough = (v.mCarryArmed == false);
+    t += 1000; v.compute(mkInfo(400, t, null));
+    var rearmed = (v.mCarryArmed == true);
+    logger.debug("armedBefore=" + armedBefore + " disarmed=" + disarmed
+                 + " floorLow=" + floorLow + " noRevival=" + noRevival
+                 + " oneNotEnough=" + oneNotEnough + " rearmed=" + rearmed
+                 + " rate=" + v.mCarbRate);
+    return armedBefore && disarmed && floorLow && noRevival && oneNotEnough && rearmed;
+}
+
+// What the carry costs in the regime it was sized for. A 1 Hz link losing one
+// sample in three never exceeds SIGNAL_GRACE_S, so it never disarms and every
+// gap is carried whole: accrued energy is 3/2 of the pedalled time, NOT the
+// pedalled time. That is intended - the readings either side are live evidence
+// the rider is pedalling - but it does mean session totals include modelled
+// dropout energy, so it is pinned here rather than left to be discovered.
+(:test)
+function test_dropout_energy_per_gap_bound(logger) {
+    var v = cbvWarmView(400, 4);
+    var t = 5000;
+    var k0 = v.mModelKcal;
+    t += 1000; v.compute(mkInfo(400, t, null));
+    var kcalPerSec = v.mModelKcal - k0;
+    var before = v.mModelKcal;
+    // 30 x [400, 400, null] at 1 Hz: 60 pedalled seconds, 30 gaps of 1 s.
+    for (var j = 0; j < 30; j += 1) {
+        t += 1000; v.compute(mkInfo(400, t, null));
+        t += 1000; v.compute(mkInfo(400, t, null));
+        t += 1000; v.compute(mkInfo(null, t, null));
+    }
+    var seconds = (v.mModelKcal - before) / kcalPerSec;
+    // 90 s of wall clock, every gap carried: 90, not 60.
+    var carriesEveryGap = (kcalPerSec > 0.0) && (seconds > 89.0) && (seconds < 91.0);
+    // The loop ends ON a gap, so mNullSec is 1.0 here; one reading clears it, and
+    // only then does the next gap get the full window. (Without this the gap below
+    // carries 1.5 s, not 2.5 - which is correct behaviour and a wrong assertion.)
+    t += 1000; v.compute(mkInfo(400, t, null));
+    var stillArmed = (v.mCarryArmed == true) && (v.mNullSec == 0.0);
+    // Per-gap bound: no single gap can contribute more than SIGNAL_GRACE_S.
+    var k1 = v.mModelKcal;
+    t += 10000; v.compute(mkInfo(null, t, null));      // one 10 s gap
+    var oneGap = (v.mModelKcal - k1) / kcalPerSec;
+    var gapBounded = (oneGap > 2.0) && (oneGap < 3.0);
+    logger.debug("seconds=" + seconds + " carriesEveryGap=" + carriesEveryGap
+                 + " stillArmed=" + stillArmed + " oneGap=" + oneGap
+                 + " gapBounded=" + gapBounded);
+    return carriesEveryGap && stillArmed && gapBounded;
 }
 
 // A reported stop (speed or cadence exactly 0) proves the rider is not still
@@ -509,9 +632,11 @@ function test_derived_pct_duty_cycle_invariant(logger) {
     var pctDuty = vDuty.mCarbPctRoll;
     // The RATES are roughly halved by the lost samples...
     var ratesLower = (vDuty.mCarbRate < 0.8 * vFull.mCarbRate);
-    // ...but the RATIO is not. 0.5 pp is generous: the two differ only by where
-    // in the cycle they were sampled, and both are pure ratios of the same mix.
-    var pctSame = ((pctClean - pctDuty) < 0.5) && ((pctDuty - pctClean) < 0.5);
+    // ...but the RATIO is not: proportional decay preserves it exactly, so this
+    // is a tight relative comparison with a tiny absolute floor rather than the
+    // 0.5 pp window an earlier revision used - at settings where the percentage
+    // itself is ~1e-11, a 0.5 pp window would pass with the value deleted.
+    var pctSame = cbvClose(pctClean, pctDuty, 0.0000001, 0.0001);
     logger.debug("pctClean=" + pctClean + " pctDuty=" + pctDuty
                  + " ratesLower=" + ratesLower + " pctSame=" + pctSame
                  + " rateFull=" + vFull.mCarbRate + " rateDuty=" + vDuty.mCarbRate);
@@ -564,6 +689,37 @@ function test_flux_floor_hysteresis(logger) {
                  + " released=" + released + " holdsAboveEngage=" + holdsAboveEngage
                  + " reEngaged=" + reEngaged);
     return startsLow && holdsBelowRelease && released && holdsAboveEngage && reEngaged;
+}
+
+// The thresholds AT their boundary values, which the test above cannot reach: it
+// steps the clock, and a null sample decays the rates ~10% before the latch reads
+// them (6.0 -> 5.4), so it only brackets the constants. Re-using the SAME
+// timerTime gives dt = 0, which skips the whole accrual block while still running
+// the derivation - so the latch sees exactly the value that was set.
+//
+// Both comparisons are strict, so the boundary values themselves do NOT switch:
+// release needs flux > FLUX_RELEASE, engage needs flux < FLUX_ENGAGE.
+(:test)
+function test_flux_floor_exact_boundaries(logger) {
+    var v = cbvNewView();
+    var t = 1000;
+    v.compute(mkInfo(null, t, null));                  // prime; latch starts low
+
+    cbvSetFlux(v, 8.0);  v.compute(mkInfo(null, t, null));   // dt = 0
+    var exactReleaseHolds = (v.mFluxLow == true);      // 8.0 is not > 8.0
+    cbvSetFlux(v, 8.001); v.compute(mkInfo(null, t, null));
+    var justAboveReleases = (v.mFluxLow == false);
+
+    cbvSetFlux(v, 5.0);  v.compute(mkInfo(null, t, null));
+    var exactEngageHolds = (v.mFluxLow == false);      // 5.0 is not < 5.0
+    cbvSetFlux(v, 4.999); v.compute(mkInfo(null, t, null));
+    var justBelowEngages = (v.mFluxLow == true);
+
+    logger.debug("exactReleaseHolds=" + exactReleaseHolds
+                 + " justAboveReleases=" + justAboveReleases
+                 + " exactEngageHolds=" + exactEngageHolds
+                 + " justBelowEngages=" + justBelowEngages);
+    return exactReleaseHolds && justAboveReleases && exactEngageHolds && justBelowEngages;
 }
 
 // The floor must never grey a state in which the BLUE fat-max band would be
@@ -635,13 +791,15 @@ function test_resume_after_long_gap_recolours_at_once(logger) {
     // wrongly. Asserted as "unchanged", not "still >= 85", so it holds at any
     // legal settings (400 W may sit below LT1).
     var ratesGone   = (preRate > 0.0) && (v.mCarbRate < 0.02 * preRate);
-    var pctUnchanged = cbvRelEq(v.mCarbPctRoll, pctBefore, 0.0001);
+    // Explicit absolute floor: cbvRelEq would degenerate to a 1e-4 ABSOLUTE
+    // window at settings where the percentage is tiny, and admit 0.0.
+    var pctUnchanged = cbvClose(v.mCarbPctRoll, pctBefore, 0.0000001, 0.0001);
     t += 1000; v.compute(mkInfo(400, t, null));        // one ACTIVE sample
     var releasedAtOnce = (v.mFluxLow == false) && (v.carbPctStr().equals("--") == false);
     // Proportional decay plus a proportional pull means the percentage never
     // left the mix at 400 W, so it reports it exactly on resume.
     var pctTarget = v.choFraction(400.0) * 100.0;
-    var near = cbvRelEq(v.mCarbPctRoll, pctTarget, 0.0001);
+    var near = cbvClose(v.mCarbPctRoll, pctTarget, 0.0000001, 0.0001);
     logger.debug("greyAtRest=" + greyAtRest + " dashAtRest=" + dashAtRest
                  + " ratesGone=" + ratesGone + " pctUnchanged=" + pctUnchanged
                  + " releasedAtOnce=" + releasedAtOnce + " near=" + near
@@ -649,35 +807,79 @@ function test_resume_after_long_gap_recolours_at_once(logger) {
     return greyAtRest && dashAtRest && ratesGone && pctUnchanged && releasedAtOnce && near;
 }
 
+// RED reached through compute() rather than by setting mCarbPctRoll: every other
+// colour assertion in this file writes the field directly, so nothing proves the
+// derived percentage can actually reach the RED branch on real samples.
+//
+// 3000 W is physiologically absurd and deliberately so - it is the only power
+// that is settings-INDEPENDENT here. choFraction saturates at any legal
+// (ftp, lt1): the logit is clamped at +30, so the carb share is ~100 % whether
+// FTP is 50 or 600, and the sample is synthetic anyway.
+(:test)
+function test_compute_drives_red(logger) {
+    var v = cbvNewView();
+    var t = 1000;
+    v.compute(mkInfo(3000, t, null));                  // prime (dt=0)
+    t += 1000; v.compute(mkInfo(3000, t, null));       // one ACTIVE sample seeds
+    var pctHigh  = (v.mCarbPctRoll >= 85.0);
+    var released = (v.mFluxLow == false);
+    var isRed    = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_RED);
+    var numeric  = (v.carbPctStr().equals("--") == false);
+    logger.debug("pct=" + v.mCarbPctRoll + " pctHigh=" + pctHigh + " released=" + released
+                 + " isRed=" + isRed + " numeric=" + numeric + " str=" + v.carbPctStr());
+    return pctHigh && released && isRed && numeric;
+}
+
 // -------- structural pin: the fat-max scan --------
 //
 // Every VALUE the model produces is checked against the model itself elsewhere
 // in this suite, which cannot catch a change to the SHAPE of an expression. This
-// pin can: mFatMaxW must be the argmax of fat rate over the scan grid, so
-// swapping the score to pw*choFraction(pw) (or dropping the 1.0 -) moves it to
-// the top of the range and this fails.
+// pin can: mFatMaxW must be the argmax of the fat-oxidation score over the scan
+// grid, so mutating the score to pw*choFraction(pw) (or dropping the 1.0 -) moves
+// it to the top of the range, where the true score is near zero, and this fails.
 //
-// The neighbours MUST be clamped to [30, mScanMaxW]: the scan is anchored at
-// 30 W, and at small FTP the continuous peak sits below that, so mFatMaxW == 30
-// legitimately has a higher-fat-rate neighbour at 28 W. Asserting without the
-// clamp red-lights at legal settings (e.g. ftp=50 / lt1=6).
+// TWO things matter about how it is written, both learned the hard way:
+//
+// 1. Compare the scan's OWN score expression, re-stated here, not fatRateAt().
+//    fatRateAt() is the same quantity in a different operation order, so in
+//    binary32 it can rank two watts differently: at ftp=540 / lt1=18 / ge=28 the
+//    scan picks 324 W while fatRateAt(324) = 35.239254 < fatRateAt(326) =
+//    35.239258. A pin built on fatRateAt therefore RED-LIGHTS CORRECT CODE at
+//    some legal settings. Re-stating the score makes ties exact equalities.
+// 2. Scan the WHOLE grid, not the +-2 neighbours. The mutated score's argmax
+//    lands where choFraction is saturated and fat rate is locally flat or
+//    rising, so a local check passes: the mutant survives a neighbour-only pin at
+//    roughly a quarter of sampled settings - every narrow-span case (50/49,
+//    60/59 ... 600/599). Full-grid, it dies everywhere.
+//
+// The grid bounds [30, mScanMaxW] are themselves load-bearing: the scan is
+// anchored at 30 W and at small FTP the continuous peak sits below that, so
+// mFatMaxW == 30 legitimately has a higher-fat-rate neighbour at 28 W
+// (ftp=50 / lt1=6: fatRateAt(28) = 4.6413 > fatRateAt(30) = 4.6397).
+(:debug)
+function cbvFatScore(v, pw) {
+    return pw * (1.0 - v.choFraction(pw));
+}
+
 (:test)
 function test_fatmax_is_scan_argmax(logger) {
     var v = cbvNewView();
-    var w    = v.mFatMaxW;
-    var peak = v.fatRateAt(w);
+    var w      = v.mFatMaxW;
+    var best   = cbvFatScore(v, w);
     var inGrid = (w >= 30) && (w <= v.mScanMaxW);
-    var lowerOk = true;
-    var upperOk = true;
-    var checked = 0;
-    if (w - 2 >= 30)          { lowerOk = (peak >= v.fatRateAt(w - 2)); checked += 1; }
-    if (w + 2 <= v.mScanMaxW) { upperOk = (peak >= v.fatRateAt(w + 2)); checked += 1; }
-    // mFatMaxRate must BE that value, not a separately-derived one.
-    var consistent = cbvRelEq(v.mFatMaxRate, peak, 0.000001);
-    logger.debug("w=" + w + " scanMax=" + v.mScanMaxW + " peak=" + peak
-                 + " inGrid=" + inGrid + " lowerOk=" + lowerOk + " upperOk=" + upperOk
-                 + " checked=" + checked + " consistent=" + consistent);
-    return inGrid && lowerOk && upperOk && consistent && (checked >= 1);
+    var isMax  = true;
+    var n      = 0;
+    for (var pw = 30; pw <= v.mScanMaxW; pw += 2) {
+        n += 1;
+        if (cbvFatScore(v, pw) > best) { isMax = false; }
+    }
+    // mFatMaxRate must BE the fat rate at that power, not a separately-derived
+    // value - this is the arm that catches a change to mFatMaxRate's own formula.
+    var consistent = cbvRelEq(v.mFatMaxRate, v.fatRateAt(w), 0.000001);
+    logger.debug("w=" + w + " scanMax=" + v.mScanMaxW + " best=" + best
+                 + " inGrid=" + inGrid + " isMax=" + isMax + " scanned=" + n
+                 + " consistent=" + consistent);
+    return inGrid && isMax && consistent && (n >= 16);
 }
 
 // -------- #15: fat-max BLUE band is reconFactor()-invariant --------

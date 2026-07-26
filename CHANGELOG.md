@@ -25,12 +25,22 @@ All notable changes to **Carb Burn** are documented here. Format based on
   *ratio* is not meaningful when there is almost no substrate being burned, and
   printing one there is what produced the "0 g/h shown in red" report. The colour
   greys out with it. The fat-max (blue) band is unaffected by construction.
-- The colour now relaxes when the effort has genuinely ended rather than at a
-  fixed 3 s after the power drops — so a 10 s dropout at 100+ g/h stays in its
-  zone — and it recovers immediately when power returns.
+- The colour now relaxes once the rolling flux is genuinely negligible rather than
+  at a fixed 3 s after the power drops, and it recovers immediately when power
+  returns. In practice that widens the window in which the percentage can stay
+  high over a falling rate — from 3 s to roughly 28 s from 100 g/h — but for that
+  whole window the rate on screen is still substantial, which is the case the old
+  3 s rule got wrong in the other direction.
 
-Affects the live `carb_rate` / `fat_rate` FIT trace, which now tracks through
-brief signal dropouts. Session totals and the recorded field ids are unchanged.
+### Changed
+
+- **Session totals now include modelled dropout energy.** A carried gap accrues
+  at the last known power, bounded by 2.5 s per gap, so a ride through a flaky
+  power meter records more carbohydrate than the same ride did before — with a
+  meter losing one sample in three, up to about half again as much. This is the
+  intended consequence of no longer discarding energy the rider demonstrably
+  produced, but it does mean totals are not directly comparable with rides
+  recorded on earlier versions. The recorded FIT field ids are unchanged.
 
 ### Added
 

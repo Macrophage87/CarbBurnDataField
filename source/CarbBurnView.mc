@@ -111,9 +111,16 @@ class CarbBurnView extends WatchUi.DataField {
     // at 1 Hz with a 2-6 s supervision timeout, so a gap past ~3 s is usually a
     // real disconnect. Anything >= 5 s buys little and multiplies phantom work.
     private const SIGNAL_GRACE_S   = 2.5;
-    // Consecutive ACTIVE samples needed to (re-)arm the carry. Without this a
-    // link alternating [null, active, null, active...] carries on every single
-    // active sample, so a flaky meter accrues phantom energy indefinitely.
+    // Consecutive ACTIVE samples needed to (re-)arm the carry once it has been
+    // LOST - which happens on a gap past the window, or on a measured 0 W.
+    //
+    // Note what it therefore does NOT do: a link alternating [1 s gap, one
+    // reading, ...] never exceeds the window, so it never disarms and it carries
+    // on every gap. That is intended - the alternate readings are live evidence
+    // the rider is still pedalling, which is the whole basis for carrying - but
+    // it means this guard is about regaining trust after a real loss of signal,
+    // not about rate-limiting short gaps. The aggregate bound in that regime is
+    // SIGNAL_GRACE_S per gap, and nothing more.
     private const CARRY_REARM_N    = 2;
     // mLastPower before the first ACTIVE sample. Must be < 0, NOT 0.0: a session
     // opening on null then has no power to carry and falls through to COASTING,
@@ -128,20 +135,29 @@ class CarbBurnView extends WatchUi.DataField {
     // The binding constraint is that the floor must never grey a power at which
     // the BLUE fat-max band would be shown. Swept over the full legal grid
     // (ftp 50-600 x lt1 0-500, ge at its legal max 0.28), the minimum total
-    // carb-equivalent flux anywhere on the BLUE band - at its LOWER EDGE, over
-    // reachable EMA states rather than integer watts - is 15.55 g/h, at
-    // ftp=50 / lt1=19 / 20.24 W. FLUX_RELEASE is the binding threshold (the
-    // higher of the two), leaving 1.94x margin.
+    // carb-equivalent flux anywhere on the BLUE band - at its LOWER EDGE, not at
+    // the fat-max point - is 15.5491 g/h, at ftp=50 / lt1=19 / 20.24 W.
+    // FLUX_RELEASE is the binding threshold (the higher of the two), leaving
+    // 1.94x margin.
+    //
+    // Precisely: 15.5491 is the CONTINUUM infimum over the band edge. Because
+    // mFatRate is an EMA it interpolates between integer watts, so the reachable
+    // set is wider than the integer-watt one (whose own hull bottoms out at
+    // 15.5606) - hence the continuum figure is the safe one to pin.
     //
     // That number is sensitive to how the edge search is discretised, so the
     // convention is part of the constraint: continuous edge, threshold taken as
-    // 0.95 x the fat-max SCAN's own peak (not a continuous peak). Inheriting the
-    // scan's "30 ... += 2" grid instead yields 23.05 g/h and inheriting a 1 W
-    // grid yields 16.13 - both of which greyed part of the band for some legal
-    // settings. zoneColor() also gates the floor on the BLUE test itself, so the
-    // band is protected structurally even if this bound is ever wrong again.
+    // 0.95 x the fat-max SCAN's own peak (not a continuous peak). The same sweep
+    // over coarser grids gives 16.13 g/h at 1 W steps, 16.90 at anchor 2 step 2,
+    // and 23.05 inheriting the scan's own "30 ... += 2" - all of which greyed
+    // part of the band for some legal settings. zoneColor() also gates the floor
+    // on the BLUE test itself, so the band is protected structurally even if this
+    // bound is ever wrong again.
     private const FLUX_ENGAGE      = 5.0;
     private const FLUX_RELEASE     = 8.0;
+    // The one sentinel this field renders in place of a number. Single-sourced so
+    // carbPctStr(), drawGrid()'s glycogen cells and valueFont() cannot disagree.
+    private const NO_VALUE         = "--";
 
     function initialize() {
         DataField.initialize();
@@ -393,8 +409,24 @@ class CarbBurnView extends WatchUi.DataField {
     // it can still read 23 at recon 3.0). drawGrid() already uses "--" for the
     // glycogen cells when weight is unset, so the idiom is not new here.
     function carbPctStr() {
-        if (fluxUndefined()) { return "--"; }
+        if (fluxUndefined()) { return NO_VALUE; }
         return mCarbPctRoll.format("%.0f");
+    }
+
+    // Font for a value cell. The FONT_NUMBER_* faces are digit-only designs -
+    // their documented safe set is "#%+-./0123456789:" plus the degree sign, and
+    // Garmin has removed the per-device glyph tables, while an unsupported glyph
+    // renders as a filled BOX on Edge hardware. Rather than bet the sentinel on
+    // that, draw any non-numeric value string in a text font (which is what
+    // drawGrid() has always done for its own NO_VALUE cells). The height is taken
+    // from whichever font actually draws, so the layout cannot drift.
+    function valueFont(dc, s, numFont) {
+        if (s.equals(NO_VALUE) == false) { return numFont; }
+        var alt = Graphics.FONT_MEDIUM;
+        if (dc.getFontHeight(alt) > dc.getFontHeight(numFont)) {
+            alt = Graphics.FONT_SMALL;
+        }
+        return alt;
     }
 
     // Modelled carbohydrate oxidation rate at a given power, g/hr.
@@ -478,6 +510,16 @@ class CarbBurnView extends WatchUi.DataField {
                 accrueActive(p, dt);
             } else {
                 mActiveRun = 0;
+                // A MEASURED zero is a reading, and it says the rider stopped
+                // pedalling - so it invalidates the carry. Without this, an hour
+                // of freewheeling at a reported 0 W leaves mCarryArmed set and
+                // mLastPower stale, and the first null sample afterwards revives
+                // an hour-old power: the rates jump off zero, the flux crosses
+                // FLUX_RELEASE and the cell flips from "--" to a coloured number.
+                // Re-arming costs CARRY_REARM_N readings, which is the right
+                // price after a coast. (mNullSec is untouched here: it counts
+                // MISSING readings only, which is what rule 1 requires.)
+                if (p != null) { mCarryArmed = false; }
                 // How much of this sample may be modelled at the last known
                 // power: the part of dt that still lies inside the grace window.
                 // Clamping rather than testing is what keeps one long sample from
@@ -528,8 +570,9 @@ class CarbBurnView extends WatchUi.DataField {
 
         // Flux-floor latch. A pure function of the derived flux, so unlike the
         // deleted mCoastSec timer it cannot desynchronise from the rates it is
-        // meant to describe.
-        var flux = totKcalHr / KCAL_PER_G;
+        // meant to describe. Routed through totalFlux() so there is exactly ONE
+        // definition of the quantity the floor tests.
+        var flux = totalFlux();
         if (mFluxLow) {
             if (flux > FLUX_RELEASE) { mFluxLow = false; }
         } else if (flux < FLUX_ENGAGE) {
@@ -687,8 +730,9 @@ class CarbBurnView extends WatchUi.DataField {
             dc.drawText(colCx, top, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(colors[i], Graphics.COLOR_TRANSPARENT);
-            dc.drawText(colCx, top + lblH, numFont,
-                        values[i], Graphics.TEXT_JUSTIFY_CENTER);
+            var vf = valueFont(dc, values[i], numFont);
+            var vy = top + lblH + ((valH - dc.getFontHeight(vf)) / 2);
+            dc.drawText(colCx, vy, vf, values[i], Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
@@ -711,8 +755,9 @@ class CarbBurnView extends WatchUi.DataField {
             dc.drawText(cx, yTop, Graphics.FONT_XTINY,
                         labels[i], Graphics.TEXT_JUSTIFY_CENTER);
             dc.setColor(colors[i], Graphics.COLOR_TRANSPARENT);
-            dc.drawText(cx, yTop + lblH, numFont,
-                        values[i], Graphics.TEXT_JUSTIFY_CENTER);
+            var vf = valueFont(dc, values[i], numFont);
+            var vy = yTop + lblH + ((valH - dc.getFontHeight(vf)) / 2);
+            dc.drawText(cx, vy, vf, values[i], Graphics.TEXT_JUSTIFY_CENTER);
         }
     }
 
@@ -736,8 +781,8 @@ class CarbBurnView extends WatchUi.DataField {
         var glyLeft = hasW ? (glyTot - mGramsCho) : 0.0;
         if (glyLeft < 0.0) { glyLeft = 0.0; }
         var glyLeftPct = hasW ? (glyLeft / glyTot * 100.0) : 0.0;
-        var glyLeftStr = hasW ? glyLeft.format("%.0f") : "--";
-        var glyPctStr  = hasW ? glyLeftPct.format("%.0f") : "--";
+        var glyLeftStr = hasW ? glyLeft.format("%.0f") : NO_VALUE;
+        var glyPctStr  = hasW ? glyLeftPct.format("%.0f") : NO_VALUE;
 
         var nRows = 5;
         var rowH  = h / nRows;
