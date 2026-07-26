@@ -5,6 +5,33 @@ All notable changes to **Carb Burn** are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The carb % no longer stays high while the carb rate reads near zero, and an
+  intermittent power meter no longer suppresses the rate.** Two changes to the
+  same code path:
+  - A gap in the power signal is now told apart from a genuine coast. A *missing*
+    reading (the meter dropped out) is modelled at the last known power for up to
+    2.5 s; a *measured* 0 W is always treated as coasting. Previously both looked
+    identical, so a meter losing one sample in three under-read the rolling carb
+    rate by roughly half while the percentage stayed pinned high.
+  - The rolling carb % is now derived from the rolling carb and fat rates rather
+    than smoothed on its own, so it can no longer contradict them. Because a
+    coast decays both rates in step, the percentage reports the substrate mix of
+    the power actually being ridden regardless of how much of the signal was
+    lost.
+- **The carb % cell shows `--` instead of a number once the rolling flux is
+  negligible** (below ~5 g/h carb-equivalent, restored above ~8). A substrate
+  *ratio* is not meaningful when there is almost no substrate being burned, and
+  printing one there is what produced the "0 g/h shown in red" report. The colour
+  greys out with it. The fat-max (blue) band is unaffected by construction.
+- The colour now relaxes when the effort has genuinely ended rather than at a
+  fixed 3 s after the power drops — so a 10 s dropout at 100+ g/h stays in its
+  zone — and it recovers immediately when power returns.
+
+Affects the live `carb_rate` / `fat_rate` FIT trace, which now tracks through
+brief signal dropouts. Session totals and the recorded field ids are unchanged.
+
 ### Added
 
 - **Speed-axis white-paper figure (Figure 3).** `tools/plot_speed_curves.py`

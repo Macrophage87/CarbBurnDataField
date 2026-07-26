@@ -21,7 +21,9 @@ using Toybox.FitContributor;
 //
 // Layout (chosen by field shape, resolution independent):
 //   - Field WIDER than tall  -> 3 core readouts side by side (carbs g, carb g/h,
-//     carb %). The carb g/h and carb % are BOTH rolling (same EMA interval).
+//     carb %). The carb g/h is a rolling EMA; the carb % is DERIVED from the two
+//     rolling rates (#33), so it can never contradict them, and reads "--" while
+//     the total flux is too small for a substrate ratio to mean anything.
 //   - Full-screen field      -> a grid: for carb g/h, fat g/h and carb % it shows
 //     rolling / lap-average / overall-average; plus carbs spent, glycogen left
 //     (g and %), and the fat-max and 50% crossover wattages.
@@ -43,7 +45,8 @@ class CarbBurnView extends WatchUi.DataField {
     // ---- Derived logistic constants ----
     private var mK;         // steepness
     private var mP50;       // power at 50% CHO (crossover watts)
-    private var mFatMaxW;   // power (W) that maximises fat oxidation rate
+    var mFatMaxW;   // power (W) that maximises fat oxidation rate (not private: read by tests)
+    var mScanMaxW;  // top of the fat-max scan grid (not private: read by tests)
     private var mCarbIntake;// assumed carb intake during the ride, g/hr
     private var mEquilW;    // power (W) where carb oxidation == intake (fueling equilibrium)
     var mFatMaxRate;// peak fat oxidation rate (g/h) at fat-max power (not private: read by tests)
@@ -65,9 +68,15 @@ class CarbBurnView extends WatchUi.DataField {
     // ---- Rolling (EMA) values ---- (not private: read by the unit tests)
     var mCarbRate;   // carb g/hr, smoothed
     var mFatRate;    // fat g/hr, smoothed
-    var mCarbPctRoll;// carb % of energy, smoothed
+    var mCarbPctRoll;// carb % of energy - DERIVED from the two rates above (#33)
     var mRollN;      // active-sample count for EMA warm-up seeding (0 = unseeded)
-    var mCoastSec;   // accumulated consecutive coast SECONDS (sustained-coast guard)
+
+    // ---- Power-signal state machine (#33) ---- (not private: read by the unit tests)
+    var mLastPower;  // last ACTIVE power (W), POWER_UNSET before the first one
+    var mNullSec;    // consecutive seconds with NO power reading (null), not 0 W
+    var mActiveRun;  // consecutive ACTIVE samples (re-arms the dropout carry)
+    var mCarryArmed; // may a null gap carry mLastPower? (see CARRY_REARM_N)
+    var mFluxLow;    // flux-floor hysteresis latch: is the rolling flux negligible?
 
     private var mLastTimerMs;
 
@@ -80,7 +89,7 @@ class CarbBurnView extends WatchUi.DataField {
     // ---- Display values (reconciled where relevant) ----
     private var mGramsCho;   // total carb grams
     private var mGramsFat;   // total fat grams
-    private var mRateDisp;   // carb g/hr rolling (reconciled)
+    var mRateDisp;   // carb g/hr rolling (reconciled) (not private: read by tests)
     private var mPctCho;     // overall carb %
     private var mGlycPct;    // % of glycogen stores used
 
@@ -90,13 +99,49 @@ class CarbBurnView extends WatchUi.DataField {
     private const KCAL_PER_G       = 4.0;    // carbohydrate energy yield
     private const KCAL_PER_G_FAT   = 9.0;    // fat energy yield
     private const GLYCOGEN_G_PER_KG = 8.0;   // approx total body glycogen store
-    private const RATE_ALPHA       = 0.10;   // EMA smoothing at dt=1 s (shared by rate + %)
-    private const COAST_HOLD_S     = 3.0;    // coast SECONDS before the rolling % relaxes (dt-aware, like the rates)
-    // Target the rolling carb % decays toward while coasting. Held at a literal
-    // 0 rather than choFraction(0)*100: the latter is ~0.2% at typical settings
-    // but reaches ~30% at extreme legal ones (ftp=600 / lt1=50), which would
-    // stop a coast from ever relaxing out of the GREEN band.
-    private const INST_PCT0        = 0.0;
+    private const RATE_ALPHA       = 0.10;   // EMA smoothing at dt=1 s
+
+    // #33: power-signal continuity. A MISSING reading (currentPower == null) is a
+    // measurement gap, not a physiological event - power does not teleport to 0 W
+    // for one second and back - so up to SIGNAL_GRACE_S of it is modelled at the
+    // last known power. A measured 0 W is always a real coast.
+    //
+    // 2.5 s is chosen from the link budgets, not from taste: ANT+ broadcasts at
+    // 4.005 Hz so interference gaps run sub-second to ~2 s, and BLE CPS notifies
+    // at 1 Hz with a 2-6 s supervision timeout, so a gap past ~3 s is usually a
+    // real disconnect. Anything >= 5 s buys little and multiplies phantom work.
+    private const SIGNAL_GRACE_S   = 2.5;
+    // Consecutive ACTIVE samples needed to (re-)arm the carry. Without this a
+    // link alternating [null, active, null, active...] carries on every single
+    // active sample, so a flaky meter accrues phantom energy indefinitely.
+    private const CARRY_REARM_N    = 2;
+    // mLastPower before the first ACTIVE sample. Must be < 0, NOT 0.0: a session
+    // opening on null then has no power to carry and falls through to COASTING,
+    // which is also what keeps a coasting prefix from consuming the #8 warm-up.
+    private const POWER_UNSET      = -1.0;
+
+    // #33 flux floor. Below FLUX_ENGAGE carb-equivalent g/h the substrate ratio
+    // is not a meaningful quantity and the percentage reads "--"; it becomes
+    // meaningful again above FLUX_RELEASE (hysteresis, so a sustained hover at
+    // the boundary cannot flicker the colour).
+    //
+    // The binding constraint is that the floor must never grey a power at which
+    // the BLUE fat-max band would be shown. Swept over the full legal grid
+    // (ftp 50-600 x lt1 0-500, ge at its legal max 0.28), the minimum total
+    // carb-equivalent flux anywhere on the BLUE band - at its LOWER EDGE, over
+    // reachable EMA states rather than integer watts - is 15.55 g/h, at
+    // ftp=50 / lt1=19 / 20.24 W. FLUX_RELEASE is the binding threshold (the
+    // higher of the two), leaving 1.94x margin.
+    //
+    // That number is sensitive to how the edge search is discretised, so the
+    // convention is part of the constraint: continuous edge, threshold taken as
+    // 0.95 x the fat-max SCAN's own peak (not a continuous peak). Inheriting the
+    // scan's "30 ... += 2" grid instead yields 23.05 g/h and inheriting a 1 W
+    // grid yields 16.13 - both of which greyed part of the band for some legal
+    // settings. zoneColor() also gates the floor on the BLUE test itself, so the
+    // band is protected structurally even if this bound is ever wrong again.
+    private const FLUX_ENGAGE      = 5.0;
+    private const FLUX_RELEASE     = 8.0;
 
     function initialize() {
         DataField.initialize();
@@ -171,7 +216,13 @@ class CarbBurnView extends WatchUi.DataField {
         mFatRate       = 0.0;
         mCarbPctRoll   = 0.0;
         mRollN         = 0;    // re-arm EMA warm-up on every session reset
-        mCoastSec      = 0.0;  // and the sustained-coast guard (seconds)
+        // #33 signal state machine: a reset is a gap of unknown length, so the
+        // correct restore is "no power known, nothing armed, flux negligible".
+        mLastPower     = POWER_UNSET;
+        mNullSec       = 0.0;
+        mActiveRun     = 0;
+        mCarryArmed    = false;
+        mFluxLow       = true; // "--" until the flux is provably meaningful
         mLastTimerMs   = 0;
         mGramsCho      = 0.0;
         mGramsFat      = 0.0;
@@ -235,8 +286,21 @@ class CarbBurnView extends WatchUi.DataField {
         mP50 = lt1f + 0.2631 * span;
 
         // Fat-max power (peak of power * fatFraction); no closed form -> scan.
+        //
+        // The scan grid (anchor 30, step 2, bound 1.3*FTP) is load-bearing, not
+        // incidental: mFatMaxW is the argmax over THIS grid, so the continuous
+        // peak can legitimately sit below 30 W at small FTP - which is why a test
+        // asserting "fat rate at mFatMaxW is maximal" must restrict itself to
+        // neighbours inside [30, mScanMaxW].
+        //
+        // The comparison is a strict `>`, so on the rare tie the LOWER power
+        // wins. Ties are reachable: in 32-bit float the scores at two adjacent
+        // even watts can be bit-identical (e.g. ftp=189/lt1=16 gives exactly
+        // 37.491180419921875 at both 110 W and 112 W), so a re-implementation
+        // that uses `>=` will disagree with this one by one scan step.
         var pMax = (mFtp * 1.3).toNumber();
         if (pMax < 60) { pMax = 60; }
+        mScanMaxW = pMax;
         var bestP = 0;
         var bestScore = -1.0;
         for (var pw = 30; pw <= pMax; pw += 2) {
@@ -257,8 +321,7 @@ class CarbBurnView extends WatchUi.DataField {
 
         // Color-zone anchors for the rolling carb readouts: the modelled peak
         // fat oxidation rate (g/h) and the carb energy share at fat-max.
-        mFatMaxRate = (1.0 - choFraction(mFatMaxW))
-                      * (mFatMaxW / mGe) / J_PER_KCAL * 3600.0 / KCAL_PER_G_FAT;
+        mFatMaxRate = fatRateAt(mFatMaxW);
         mPctFatMax  = choFraction(mFatMaxW) * 100.0;
     }
 
@@ -278,12 +341,26 @@ class CarbBurnView extends WatchUi.DataField {
     // recon-invariant; mFatMaxRate itself is never rendered, so there is no
     // visible number/colour contradiction.
     function zoneColor(greyColor, onDark) {
+        // #33 flux floor, tested FIRST and for a reason: the rolling % is now
+        // derived from the two rates, and a coast decays both by the same alpha,
+        // so the ratio is preserved exactly all the way to zero flux. A rider who
+        // was above threshold therefore stays >= 85 % forever - place this test
+        // after the 85/50 branches and it is dead code for exactly the users who
+        // need it (the "RED at 0 g/h" of #7).
+        if (fluxUndefined()) { return greyColor; }
         if (mCarbPctRoll >= 85.0) { return Graphics.COLOR_RED; }
         if (mCarbPctRoll >= 50.0) { return Graphics.COLOR_ORANGE; }
         // #15: compare both sides on the SAME (un-reconciled model) scale.
         // mFatMaxRate is the un-reconciled model peak; multiplying only the
         // left side by reconFactor() (typically >1) widened the band. Reconciling
         // both sides is algebraically identical (recon cancels), so drop it.
+        // NOTE this branch is knowingly NOT duty-cycle-invariant, unlike the
+        // others: it asks a magnitude question, so a rider at exactly fat-max
+        // seen through a 50 %-duty meter has mFatRate ~= 53 % of instantaneous
+        // and never turns BLUE, while the derived percentage equals mPctFatMax
+        // exactly and the field falls through to GREEN. That is defensible - the
+        // fat-max band is about how much fat, not what share - but it is a
+        // deliberate asymmetry, not an oversight.
         if (mFatRate >= 0.95 * mFatMaxRate) {
             return onDark ? Graphics.COLOR_BLUE : Graphics.COLOR_DK_BLUE;
         }
@@ -293,10 +370,44 @@ class CarbBurnView extends WatchUi.DataField {
         return greyColor;
     }
 
+    // Total rolling oxidation as carb-equivalent g/h: (4*carb + 9*fat) / 4.
+    // UN-RECONCILED, like the BLUE band it is compared against (#15) - recon is a
+    // session-cumulative ratio, so gating "is this quantity meaningful" on it
+    // would make the floor's engagement depend on ride history.
+    function totalFlux() {
+        return (KCAL_PER_G * mCarbRate + KCAL_PER_G_FAT * mFatRate) / KCAL_PER_G;
+    }
+
+    // Is the rolling substrate ratio meaningless right now? Latched with
+    // hysteresis (see FLUX_ENGAGE / FLUX_RELEASE), and gated on the BLUE test so
+    // the floor can never grey a power at which the fat-max band would be shown -
+    // for ANY legal settings, independently of the swept 15.55 g/h bound.
+    function fluxUndefined() {
+        return mFluxLow && (mFatRate < 0.95 * mFatMaxRate);
+    }
+
+    // The carb-% cell as a STRING. Below the floor it reads "--", not "0": 0 is a
+    // legal percentage, so a numeric sentinel is unrepresentable, and printing a
+    // number there would assert a value the floor has just called undefined
+    // (#7's contradiction rebuilt - at the release threshold the g/h cell beside
+    // it can still read 23 at recon 3.0). drawGrid() already uses "--" for the
+    // glycogen cells when weight is unset, so the idiom is not new here.
+    function carbPctStr() {
+        if (fluxUndefined()) { return "--"; }
+        return mCarbPctRoll.format("%.0f");
+    }
+
     // Modelled carbohydrate oxidation rate at a given power, g/hr.
     function carbRateAt(power) {
         var metabolicW = power / mGe;
         return choFraction(power) * metabolicW / J_PER_KCAL * 3600.0 / KCAL_PER_G;
+    }
+
+    // Modelled fat oxidation rate at a given power, g/hr (the complement of
+    // carbRateAt at 9 kcal/g). mFatMaxRate is this evaluated at mFatMaxW.
+    function fatRateAt(power) {
+        var metabolicW = power / mGe;
+        return (1.0 - choFraction(power)) * metabolicW / J_PER_KCAL * 3600.0 / KCAL_PER_G_FAT;
     }
 
     function onSettingsChanged() {
@@ -339,74 +450,90 @@ class CarbBurnView extends WatchUi.DataField {
             mTotalSec += dt;
             mLapSec   += dt;
 
-            var aSteady = steadyAlpha(dt);   // #16: dt-aware steady EMA alpha
+            // ---- #33: classify the sample before acting on it ----------------
+            //
+            // main had ONE boolean (currentPower > 0) driving energy accrual, the
+            // rate EMA and the coast hold, while conflating three physical states.
+            // They are now separated:
+            //
+            //   ACTIVE   a power reading > 0            -> accrue at that power
+            //   DROPOUT  NO reading (null), within the  -> accrue at mLastPower
+            //            grace window, carry armed
+            //   COASTING a measured 0 W, or a gap past  -> decay toward zero
+            //            grace, or no power ever seen,
+            //            or speed/cadence prove a stop
+            //
+            // A measured 0 W is never a dropout: the meter is reporting, and it is
+            // reporting no work.
+            var p = null;
+            if (info != null && info.currentPower != null) {
+                p = info.currentPower.toFloat();
+            }
 
-            if (info != null && info.currentPower != null && info.currentPower > 0) {
-                var p          = info.currentPower.toFloat();
-                var metabolicW = p / mGe;
-                var kcal       = (metabolicW * dt) / J_PER_KCAL;
-                var frac       = choFraction(p);
-
-                mModelKcal     += kcal;
-                mModelCarbKcal += kcal * frac;
-                mModelFatKcal  += kcal * (1.0 - frac);
-
-                mLapKcal     += kcal;
-                mLapCarbKcal += kcal * frac;
-                mLapFatKcal  += kcal * (1.0 - frac);
-
-                // #8 warm-up: seed the EMA to the first active sample (alpha 1.0
-                // at n=1), relaxing to the dt-aware steady alpha by n>=10 - so
-                // the rolling rates (and the FIT records) don't ramp up from 0
-                // over the first ~20-30 s of every session. Float division.
-                mRollN += 1;
-                mCoastSec = 0.0;
-                var a = aSteady;
-                var warm = 1.0 / mRollN;
-                if (warm > a) { a = warm; }
-
-                // Rolling rates (g/hr) and carb %, all on the same EMA interval.
-                var kcalPerHr  = metabolicW / J_PER_KCAL * 3600.0;
-                var instCarb   = frac * kcalPerHr / KCAL_PER_G;
-                var instFat    = (1.0 - frac) * kcalPerHr / KCAL_PER_G_FAT;
-                var instPct    = frac * 100.0;
-                mCarbRate    = mCarbRate    + a * (instCarb - mCarbRate);
-                mFatRate     = mFatRate     + a * (instFat  - mFatRate);
-                mCarbPctRoll = mCarbPctRoll + a * (instPct  - mCarbPctRoll);
+            if (p != null && p > 0.0) {
+                mNullSec   = 0.0;    // cleared ONLY here, never on a 0-W sample
+                mLastPower = p;
+                mActiveRun += 1;
+                if (mActiveRun >= CARRY_REARM_N) { mCarryArmed = true; }
+                accrueActive(p, dt);
             } else {
-                // Coasting: decay the rolling rates toward zero on the steady
-                // (dt-aware) alpha - NOT the warm-up alpha (mRollN untouched).
-                // #7: also relax the rolling carb % in lockstep so it can't stay
-                // frozen high next to a ~0 rate (contradictory RED at 0 g/h) -
-                // but only after COAST_HOLD_S seconds of coasting, so a brief
-                // power-meter dropout doesn't move the RED/ORANGE zones (both
-                // keyed off mCarbPctRoll).
-                //
-                // The hold accumulates SECONDS, not samples, so that it stays
-                // consistent with the dt-aware rate decay above. A sample-count
-                // hold would decouple from it whenever dt != 1: one long sample
-                // (say dt=300) snaps the rates to ~0 via aSteady~=1 while a
-                // count of 1 would still hold the %, re-creating exactly the
-                // "RED at 0 g/h" state this block exists to remove. In seconds,
-                // that same sample also satisfies the hold, so both halves move
-                // together. At a steady 1 Hz the behaviour is unchanged (the
-                // 3rd consecutive coast sample crosses 3.0 s).
-                //
-                // Note the hold does NOT cover the BLUE fat-max band, which
-                // keys off mFatRate - that decays from the first coast sample,
-                // so a single dropout can drop out of BLUE.
-                mCoastSec += dt;
-                mCarbRate = mCarbRate + aSteady * (0.0 - mCarbRate);
-                mFatRate  = mFatRate  + aSteady * (0.0 - mFatRate);
-                if (mCoastSec >= COAST_HOLD_S) {
-                    mCarbPctRoll = mCarbPctRoll + aSteady * (INST_PCT0 - mCarbPctRoll);
+                mActiveRun = 0;
+                // How much of this sample may be modelled at the last known
+                // power: the part of dt that still lies inside the grace window.
+                // Clamping rather than testing is what keeps one long sample from
+                // being carried whole - a dt=300 s gap contributes 2.5 s of carry
+                // and 297.5 s of coasting, not 300 s of phantom pedalling.
+                var carry = 0.0;
+                if (p == null && mCarryArmed && mLastPower > 0.0 && !signalStopped(info)) {
+                    var room = SIGNAL_GRACE_S - mNullSec;
+                    if (room > 0.0) { carry = (dt < room) ? dt : room; }
                 }
+                if (p == null) {
+                    mNullSec += dt;
+                    // Past the window the signal is treated as genuinely lost, so
+                    // the carry DISARMS: it takes CARRY_REARM_N consecutive
+                    // readings to trust the link again. Without this a meter
+                    // alternating [long gap, one reading, long gap, ...] carries
+                    // on every isolated reading for the whole ride.
+                    if (mNullSec >= SIGNAL_GRACE_S) { mCarryArmed = false; }
+                }
+                if (carry > 0.0)        { accrueActive(mLastPower, carry); }
+                if (dt - carry > 0.0)   { accrueCoast(dt - carry); }
             }
         }
 
         // Garmin cumulative calories (weight-aware) for the cross-check.
         if (info != null && info.calories != null && info.calories > 0) {
             mGarminKcal = info.calories.toFloat();
+        }
+
+        // #33/#7: the rolling carb % is DERIVED from the two rolling rates, not
+        // smoothed independently. mCoastSec / COAST_HOLD_S / INST_PCT0 are gone
+        // with it. This makes "high % beside a near-zero rate" impossible by
+        // construction instead of guarding it with a timer that measurably failed
+        // to (a 50 %-duty meter never reached the hold at all).
+        //
+        // Two properties follow. Good: the percentage is duty-cycle-invariant -
+        // a coast decays both rates by the same alpha, so the ratio always
+        // reports the substrate mix of the power being ridden. Costly: a
+        // sustained coast therefore HOLDS its pre-coast percentage, which is why
+        // the flux floor below is load-bearing rather than belt-and-braces.
+        var carbKcalHr = KCAL_PER_G * mCarbRate;
+        var fatKcalHr  = KCAL_PER_G_FAT * mFatRate;
+        var totKcalHr  = carbKcalHr + fatKcalHr;
+        // Guarded HERE, at the assignment site, not in zoneColor(): both rates
+        // are exactly 0.0 after resetSession(), so an unguarded 0/(0+0) would
+        // store NaN and every layout would render "nan".
+        mCarbPctRoll = (totKcalHr > 0.0) ? (carbKcalHr / totKcalHr * 100.0) : 0.0;
+
+        // Flux-floor latch. A pure function of the derived flux, so unlike the
+        // deleted mCoastSec timer it cannot desynchronise from the rates it is
+        // meant to describe.
+        var flux = totKcalHr / KCAL_PER_G;
+        if (mFluxLow) {
+            if (flux > FLUX_RELEASE) { mFluxLow = false; }
+        } else if (flux < FLUX_ENGAGE) {
+            mFluxLow = true;
         }
 
         var recon = reconFactor();
@@ -419,6 +546,60 @@ class CarbBurnView extends WatchUi.DataField {
                     : 0.0;
 
         setFitData();
+    }
+
+    // Does the rest of Activity.Info prove the rider has stopped? A stopped rider
+    // is not producing the last known power, so a missing reading there is not a
+    // dropout worth carrying. null means "no such sensor / no data", which is NOT
+    // evidence of a stop - only a reported zero is.
+    function signalStopped(info) {
+        if (info == null) { return true; }
+        if (info.currentSpeed != null && info.currentSpeed <= 0) { return true; }
+        if (info.currentCadence != null && info.currentCadence <= 0) { return true; }
+        return false;
+    }
+
+    // Accrue `dt` seconds of pedalling at `power`, and advance the rate EMAs.
+    // Called for ACTIVE samples and for the carried part of a DROPOUT - a carried
+    // sample is a MODELLED active sample, so it consumes warm-up (#8) and uses
+    // the warm-up alpha, consistent with it accruing energy.
+    function accrueActive(power, dt) {
+        var metabolicW = power / mGe;
+        var kcal       = (metabolicW * dt) / J_PER_KCAL;
+        var frac       = choFraction(power);
+
+        mModelKcal     += kcal;
+        mModelCarbKcal += kcal * frac;
+        mModelFatKcal  += kcal * (1.0 - frac);
+
+        mLapKcal     += kcal;
+        mLapCarbKcal += kcal * frac;
+        mLapFatKcal  += kcal * (1.0 - frac);
+
+        // #8 warm-up: seed the EMA to the first active sample (alpha 1.0 at n=1),
+        // relaxing to the dt-aware steady alpha by n>=10 - so the rolling rates
+        // (and the FIT records) don't ramp up from 0 over the first ~20-30 s of
+        // every session. Float division.
+        mRollN += 1;
+        var a = steadyAlpha(dt);         // #16: dt-aware steady EMA alpha
+        var warm = 1.0 / mRollN;
+        if (warm > a) { a = warm; }
+
+        var kcalPerHr = metabolicW / J_PER_KCAL * 3600.0;
+        var instCarb  = frac * kcalPerHr / KCAL_PER_G;
+        var instFat   = (1.0 - frac) * kcalPerHr / KCAL_PER_G_FAT;
+        mCarbRate = mCarbRate + a * (instCarb - mCarbRate);
+        mFatRate  = mFatRate  + a * (instFat  - mFatRate);
+    }
+
+    // Decay both rolling rates toward zero over `dt` seconds, on the steady
+    // (dt-aware) alpha - NOT the warm-up alpha, and mRollN is untouched, so a
+    // coasting prefix cannot consume the warm-up. Decaying both by the same alpha
+    // is what makes the derived percentage duty-cycle-invariant.
+    function accrueCoast(dt) {
+        var a = steadyAlpha(dt);
+        mCarbRate = mCarbRate + a * (0.0 - mCarbRate);
+        mFatRate  = mFatRate  + a * (0.0 - mFatRate);
     }
 
     // Rescale magnitude to Garmin's calorie total when available (else 1.0).
@@ -449,7 +630,7 @@ class CarbBurnView extends WatchUi.DataField {
             var hl = ["CARBS g", "CARB g/h", "CARB %"];
             var hv = [ mGramsCho.format("%.0f"),
                        mRateDisp.format("%.0f"),
-                       mCarbPctRoll.format("%.0f") ];
+                       carbPctStr() ];
             drawHorizontal(dc, fg, w, h, hl, hv, [fg, zc, zc], 3);
             return;
         }
@@ -471,12 +652,12 @@ class CarbBurnView extends WatchUi.DataField {
         if (frac >= 0.38 && mWeight > 0.0) {
             labels = ["CARBS g", "CARB g/h", "CARB %", "GLYCG %"];
             values = [ mGramsCho.format("%.0f"), mRateDisp.format("%.0f"),
-                       mCarbPctRoll.format("%.0f"), mGlycPct.format("%.0f") ];
+                       carbPctStr(), mGlycPct.format("%.0f") ];
             colors = [fg, zc, zc, fg];
         } else {
             labels = ["CARBS g", "CARB g/h", "CARB %"];
             values = [ mGramsCho.format("%.0f"), mRateDisp.format("%.0f"),
-                       mCarbPctRoll.format("%.0f") ];
+                       carbPctStr() ];
             colors = [fg, zc, zc];
         }
         drawVertical(dc, fg, w, h, labels, values, colors, labels.size());
@@ -596,7 +777,7 @@ class CarbBurnView extends WatchUi.DataField {
         var vals = [
             [cRoll.format("%.0f"), cLap.format("%.0f"), cAvg.format("%.0f")],
             [fRoll.format("%.0f"), fLap.format("%.0f"), fAvg.format("%.0f")],
-            [mCarbPctRoll.format("%.0f"), pLap.format("%.0f"), mPctCho.format("%.0f")],
+            [carbPctStr(), pLap.format("%.0f"), mPctCho.format("%.0f")],
             [mGramsCho.format("%.0f"), glyLeftStr, glyPctStr],
             [mFatMaxW.format("%d"), mP50.format("%.0f"), mEquilW.format("%d")]
         ];
