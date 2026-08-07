@@ -17,6 +17,10 @@ internal-mir/
 *.der
 developer_key*
 
+# Python bytecode (scripts/ and tools/ are run locally)
+__pycache__/
+*.pyc
+
 # Scratch / temp
 *.tmp
 *.bak
