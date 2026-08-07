@@ -229,13 +229,15 @@ one piece of local evidence cuts against assuming it:**
 
 Practical consequence: `tools/build_beta.sh` gives the beta a distinct file name
 (`CarbBurn-Beta-<device>.prg`), so keep it distinct when you sideload. The
-on-device question is tracked as a `[Local]` issue — set both apps' settings to
-different values and read them back before trusting them to be independent.
+on-device question is tracked as
+[#63](https://github.com/Macrophage87/CarbBurnDataField/issues/63) — set both
+apps' settings to different values and read them back before trusting them to be
+independent.
 
 Likewise, whether a decoder actually shows two independently attributed copies
 of the developer fields in one `.FIT` file has **not** been observed in this
-repo; it is the design premise of this variant, tracked as a separate `[Local]`
-issue.
+repo. It is the design premise of this variant, tracked as
+[#64](https://github.com/Macrophage87/CarbBurnDataField/issues/64).
 
 ## Accuracy / caveats
 
