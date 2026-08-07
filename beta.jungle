@@ -1,0 +1,15 @@
+# Connect IQ build config - BETA variant.
+#
+# Identical to monkey.jungle except for the manifest: this one points at
+# manifest.beta.xml, which carries a separate application id so the beta
+# installs alongside the production app.
+#
+# Source (source/) and resources (resources/) are still picked up
+# automatically. The SDK's default jungle sets `base.sourcePath = .\**.mc` and
+# `base.resourcePath = resources` before this file is read, and those defaults
+# are keyed off the project directory, NOT off the jungle file's name - a
+# non-default jungle name does not change them. Verified by building this
+# jungle: it compiles source/*.mc, and manifest.beta.xml's
+# name="@Strings.AppNameBeta" resolves, which it could not do if resources/
+# were missing from the build.
+project.manifest = manifest.beta.xml
