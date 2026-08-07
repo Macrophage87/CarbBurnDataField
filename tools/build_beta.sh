@@ -102,7 +102,50 @@ fi
 # ---- device list comes FROM the beta manifest ----
 # Read, never hardcoded: the promise is "every product this manifest declares",
 # so a product added to manifest.beta.xml is built here without editing this file.
-DEVICES=$(sed -n 's/.*<iq:product[[:space:]][^>]*id="\([^"]*\)".*/\1/p' "$MANIFEST")
+#
+# Parsed with a real XML parser, NOT a regex. This used to be a line-oriented
+# `sed`, and that was measurably wrong: of nine reformattings of the SAME 13
+# products that ElementTree accepts and that `monkeyc` compiles (rc=0 for a
+# device the sed had dropped, with `-d fr965` giving rc=102 as a control that
+# monkeyc really does read this list), the sed returned the right 13 for only
+# four. Two of the five failures returned a non-empty SUBSET - 7 and 1 device -
+# which is the dangerous shape: the emptiness guard below cannot see it, NDEV is
+# derived from the same narrowed list, and the script would cheerfully print
+# "7/7 OK" while silently building half the matrix. Attribute order, quoting
+# style, spaces around '=', line breaks inside a tag and several elements per
+# line are all legal XML; a regex over lines is not a parser.
+#
+# Element matching mirrors scripts/check_manifest_appid.py (tag.endswith
+# "product"), so the two agree about what the manifest declares.
+PYTHON=${PYTHON:-}
+if [ -z "$PYTHON" ]; then
+    for cand in python3 python; do
+        if command -v "$cand" >/dev/null 2>&1; then PYTHON=$cand; break; fi
+    done
+fi
+if [ -z "$PYTHON" ]; then
+    echo "error: python3 not found, and it is required to read the device list" >&2
+    echo "  from $MANIFEST. Set PYTHON=/path/to/python3." >&2
+    echo "  This script will NOT fall back to a regex: a line-oriented parse of" >&2
+    echo "  legal XML silently returns a SUBSET of the products, and building a" >&2
+    echo "  subset of the device matrix while reporting success is worse than" >&2
+    echo "  not building at all. python3 is already required elsewhere in this" >&2
+    echo "  repo (scripts/check_manifest_appid.py, and CI runs it)." >&2
+    exit 1
+fi
+# The `tr -d '\r'` is load-bearing, not cargo: on Windows, Python's text-mode
+# stdout translates every '\n' to '\r\n', so without it each id arrives as
+# "edge530\r" - '\r' is not in IFS, so it survives word splitting and monkeyc
+# rejects it with "Invalid device id specified: 'edge530'". Measured: 12 of 13
+# devices failed that way on the first run of this parser.
+DEVICES=$("$PYTHON" -c 'import sys, xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+sys.stdout.write("\n".join(e.get("id") for e in root.iter()
+                           if e.tag.endswith("product") and e.get("id")))' \
+    "$MANIFEST" | tr -d '\r') || {
+    echo "error: could not parse $MANIFEST" >&2
+    exit 1
+}
 if [ -z "$DEVICES" ]; then
     echo "error: no <iq:product> entries found in $MANIFEST" >&2
     exit 1

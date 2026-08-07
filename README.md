@@ -208,8 +208,13 @@ It produces both artifacts:
 | package | `dist/beta/CarbBurn-Beta-<version>.iq` | the packaged build |
 | per-device | `dist/beta/prg/CarbBurn-Beta-<device>.prg` | direct sideload over USB |
 
-The device list is read out of `manifest.beta.xml`, so it is always exactly the
-products that manifest declares (13 today, the same list as production).
+The device list is read out of `manifest.beta.xml` with a real XML parser, so it
+is exactly the products that manifest declares (13 today, the same list as
+production) regardless of how the file is formatted. That used to be a
+line-oriented `sed`, and it was not: of nine reformattings of the same 13
+products that `monkeyc` compiles happily, the `sed` returned the right list for
+only four, and two of the failures returned a silent *subset* — one of them
+built 1 device of 13 and reported `1/1 OK`.
 
 Unlike `tools/build_iq.sh`, this script **never generates a signing key**: pass
 one or it exits non-zero. A key you did not choose is a key you cannot
