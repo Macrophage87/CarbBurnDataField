@@ -168,6 +168,75 @@ Set weight to `0` to disable the glycogen readout.
    [apps.garmin.com/developer/upload](https://apps.garmin.com/developer/upload).
    The VS Code equivalent is **Monkey C: Export Project**.
 
+## Beta build — install it *alongside* the production app
+
+`manifest.beta.xml` + `beta.jungle` build the **same source** under a **second
+application id** (`3aa0137493fa4511ba559720835b1ab5`, display name
+**Carb Burn (Beta)**). Connect IQ identifies an installed app by its application
+id, so the beta is a different app: it sits next to the store build instead of
+replacing it, and you can put both on one ride screen and compare them over the
+same activity.
+
+The FIT developer field ids stay **0–3**, byte-identical to production
+(`source/CarbBurnView.mc`). Same schema under a different application id is what
+makes a one-activity A/B diff readable — nothing is renumbered and no
+beta-only field is added.
+
+**The beta id is not registered on the Connect IQ Store. Never upload it there.**
+
+### Build
+
+```sh
+tools/build_beta.sh -y /path/to/developer_key.der
+# or:  CIQ_DEVELOPER_KEY=/path/to/developer_key.der  tools/build_beta.sh
+```
+
+It produces both artifacts:
+
+| Artifact | Path | For |
+|---|---|---|
+| package | `dist/beta/CarbBurn-Beta-<version>.iq` | the packaged build |
+| per-device | `dist/beta/prg/CarbBurn-Beta-<device>.prg` | direct sideload over USB |
+
+The device list is read out of `manifest.beta.xml`, so it is always exactly the
+products that manifest declares (13 today, the same list as production).
+
+Unlike `tools/build_iq.sh`, this script **never generates a signing key**: pass
+one or it exits non-zero. A key you did not choose is a key you cannot
+reproduce.
+
+### Sideload
+
+Copy `dist/beta/prg/CarbBurn-Beta-<your-device>.prg` to `GARMIN/APPS/` on the
+watch/head-unit over USB, eject, then add **Carb Burn (Beta)** to a ride data
+screen. CI also uploads the same per-device `.prg` set as the `beta-artifacts`
+artifact on every run.
+
+### Settings: what is known, and what is not
+
+The two apps are separate installs, so the intent is that each keeps its own
+FTP / LT1 / GE / weight / carb-intake values. **That is not verified here, and
+one piece of local evidence cuts against assuming it:**
+
+- *Measured (SDK 9.2.0 simulator):* persisted app settings are written to
+  `GARMIN/APPS/SETTINGS/<PRG-BASENAME>.SET` — keyed by the **`.prg` file name**,
+  and the file contains no application id at all. In the simulator, two builds
+  with different ids but the same `.prg` name would therefore share one settings
+  blob.
+- *Not measured:* how a real device scopes settings between two installed apps,
+  and how Garmin Connect Mobile presents two settings pages. No on-device
+  observation has been made.
+
+Practical consequence: `tools/build_beta.sh` gives the beta a distinct file name
+(`CarbBurn-Beta-<device>.prg`), so keep it distinct when you sideload. The
+on-device question is tracked as a `[Local]` issue — set both apps' settings to
+different values and read them back before trusting them to be independent.
+
+Likewise, whether a decoder actually shows two independently attributed copies
+of the developer fields in one `.FIT` file has **not** been observed in this
+repo; it is the design premise of this variant, tracked as a separate `[Local]`
+issue.
+
 ## Accuracy / caveats
 
 This is a **population-calibrated estimate**, not a measurement. The fat↔CHO split
@@ -180,7 +249,9 @@ live in `loadSettings()` in `source/CarbBurnView.mc` if you want to tune them.
 
 ```
 manifest.xml                         app manifest (type = datafield)
+manifest.beta.xml                    beta variant manifest (separate application id)
 monkey.jungle                        build config
+beta.jungle                          build config for the beta variant
 source/CarbBurnApp.mc                app entry point
 source/CarbBurnView.mc               the data field + physiology model
 resources/settings/properties.xml    default setting values
@@ -196,6 +267,7 @@ speed_curves.png                     Figure 3 — speed vs power / carb rate / c
 tools/simulate_fields.py             renders the simulated field screenshots
 tools/plot_speed_curves.py           renders the speed-axis white-paper figure
 tools/build_iq.sh                    exports a signed .iq for the Connect IQ Store
+tools/build_beta.sh                  builds the beta variant (.iq + per-device .prg)
 simulated_field_small.png            simulated wide (3-column) field
 simulated_field_large.png            simulated full-screen grid field
 ```

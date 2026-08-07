@@ -17,9 +17,10 @@ stock GitHub-hosted `ubuntu-latest`:
 
 | Job | Container? | Required? | What it does |
 |---|---|---|---|
-| `manifest-lint` | no | ✅ | Fails if the manifest app id is missing/placeholder/malformed. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. |
+| `manifest-lint` | no | ✅ | Fails if a manifest app id is missing/placeholder/malformed, **or if two manifests share an id**. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. Invoked with **no arguments**, so it discovers `manifest.xml` + every `manifest.<variant>.xml` — an enumerated arg list is one somebody can quietly shorten. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
 | `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
+| `beta-build` | yes | ✅ | The parallel-install **beta** variant (`beta.jungle` → `manifest.beta.xml`, separate application id): release-compiles every device, exports its `.iq`, then hexdumps each beta `.prg` to assert it embeds the **beta** application id and not the production one. Uploads `beta-artifacts`. |
 | `run-tests` | — | not wired (measured) | Headless `(:test)` **execution** is not a CI job: with the constructor abort already fixed, `monkeydo` still timed out in this container (run `30129233091`, `rc=124`) — see below. The suite's **compilation** is gated regardless by `compile-unit-test` (13 devices). |
 | `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
 | `advisory-lint` | no | ⚠️ advisory | `continue-on-error`, out of `ci-required.needs`. Flags `System.println` / `TODO` / `FIXME` as annotations. Never blocks a merge. |
@@ -27,7 +28,35 @@ stock GitHub-hosted `ubuntu-latest`:
 The **device matrix equals the manifest `<iq:products>` list** (13 devices:
 `edge530 edge830 edge540 edge840 edge1030 edge1030plus edge1040 edge1050
 edgeexplore2 fenix6pro fenix7 fenix8pro47mm fr955`). If you add or remove a
-device in `manifest.xml`, update `env.DEVICES` in the workflow to match.
+device in `manifest.xml`, update `env.DEVICES` in the workflow to match — **and
+`manifest.beta.xml`**, which must declare the same products.
+
+One direction of that is enforced rather than documented: `monkeyc` exits `102`
+(`Target device id 'X' is not enabled in the application manifest file`) when
+`-d` names a product the manifest omits — measured locally against SDK 9.2.0 —
+so a product dropped from either manifest reds its per-device loop. The other
+direction (a device dropped from `env.DEVICES`, silently narrowing the matrix)
+is still unchecked; that is [#46](https://github.com/Macrophage87/CarbBurnDataField/issues/46).
+
+## The beta variant
+
+`manifest.beta.xml` / `beta.jungle` build the same source under a second
+application id so the beta can be installed **alongside** production. CI treats
+it as a first-class build: `beta-build` is in `ci-required.needs`.
+
+Why required rather than advisory: it satisfies the `needs` contract (no
+job-level `if:`, so it runs on every PR and a skip is always a real fault), and
+it is the **only** job that consumes `manifest.beta.xml` or `beta.jungle`. Left
+advisory, those two files could break and still merge green, and a beta that
+does not build cannot serve its purpose.
+
+`beta-build` also asserts what an XML diff cannot: `monkeyc` embeds the
+application id in the `.prg` as 16 raw bytes, so the job hexdumps every beta
+`.prg` and requires the beta id **present** and the production id **absent**.
+That step is `sh` + coreutils on purpose — it does not assume the SDK container
+ships `python3`.
+
+See the README for how to build and sideload it.
 
 ## Branch protection — must be set by a repo admin
 
@@ -67,8 +96,8 @@ a new device product id isn't in SDK 9.2.0):
 1. Find a newer `ghcr.io/matco/connectiq-tester` tag that ships the device.
 2. Resolve its digest: `docker pull ghcr.io/matco/connectiq-tester:<tag>` then
    `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/matco/connectiq-tester:<tag>`.
-3. Replace **every** `container.image` value in `ci.yml` (currently two:
-   `compile-unit-test` and `release-build`) with the new `@sha256:...`, and update
+3. Replace **every** `container.image` value in `ci.yml` (currently three:
+   `compile-unit-test`, `release-build` and `beta-build`) with the new `@sha256:...`, and update
    the `# vX.Y.Z = SDK ...` comment. The digest is the pin; the tag lives only in
    the comment. There is deliberately no `env` copy of the digest —
    `container.image` cannot read the `env` context, so an `env` entry would be a

@@ -7,6 +7,18 @@ All notable changes to **Carb Burn** are documented here. Format based on
 
 ### Added
 
+- **"Carb Burn (Beta)" build variant.** `manifest.beta.xml` + `beta.jungle`
+  build the same source under a second application id
+  (`3aa0137493fa4511ba559720835b1ab5`), so the beta installs *alongside* the
+  store build instead of replacing it and both can run on one ride. The FIT
+  developer field ids stay 0–3, unchanged, so the two apps write the same schema
+  under different attribution. `tools/build_beta.sh` produces the packaged `.iq`
+  and a release `.prg` per device (and, unlike `build_iq.sh`, refuses to mint a
+  signing key). CI gains a required `beta-build` job that release-compiles the
+  variant for all 13 devices and asserts the built `.prg` carry the beta id;
+  `scripts/check_manifest_appid.py` now validates every manifest and fails if
+  two share an application id. No behaviour change to the field itself.
+
 - **Speed-axis white-paper figure (Figure 3).** `tools/plot_speed_curves.py`
   renders `speed_curves.png`: speed vs power, speed vs carb rate, and speed vs
   carb %, over the 100–300 W range typical of long rides, for a flat road, a
