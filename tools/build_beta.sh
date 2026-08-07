@@ -9,12 +9,15 @@
 #                                              for copying to GARMIN/APPS/ over USB
 #
 # The beta uses manifest.beta.xml (application id 3aa0137493fa4511ba559720835b1ab5)
-# via beta.jungle, so it installs ALONGSIDE the store build rather than replacing
-# it. The FIT developer field ids stay 0-3, identical to production - same schema,
-# different app id, which is what makes a one-activity A/B diff readable.
+# via beta.jungle. The INTENT is that it installs alongside the store build
+# rather than replacing it, and that a ride recorded with both fields active
+# yields two separately attributed sets of developer data. Both of those are
+# design premises, not measurements - nothing here has been run on a device or
+# through a FIT decoder. See #63 and #64. The FIT developer field ids stay 0-3,
+# identical to production, so that an A/B diff is readable if it works out.
 #
-# That id is NOT registered on the Connect IQ Store. Do not upload either
-# artifact there; this variant exists for sideloading beside the store build.
+# That id was not registered on the Connect IQ Store by this project. Do not
+# upload either artifact there; this variant is for sideloading.
 #
 # Needs the Connect IQ SDK (monkeyc) and its device files, both installed by the
 # Connect IQ SDK Manager (https://developer.garmin.com/connect-iq/sdk/). monkeyc
@@ -146,5 +149,5 @@ echo "done."
 echo "  package : $IQ"
 echo "  sideload: copy $OUTDIR/prg/CarbBurn-Beta-<device>.prg to GARMIN/APPS/ on the device"
 echo
-echo "NOTE: the beta application id is NOT registered on the Connect IQ Store."
-echo "      Do not upload this package there; it is for sideloading only."
+echo "NOTE: the beta application id was not registered on the Connect IQ Store by"
+echo "      this project. Do not upload this package there; it is for sideloading."

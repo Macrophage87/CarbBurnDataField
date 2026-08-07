@@ -12,11 +12,13 @@ obvious placeholder. A registered id is a 32-character hex GUID with no dashes
 
 The repo ships more than one manifest: manifest.xml (production, registered on
 the store) and manifest.beta.xml (the parallel-install beta variant). Those two
-ids MUST differ. Two installed apps sharing an id are the same app to Connect
-IQ - the beta would replace the production build instead of sitting beside it,
-and their FIT developer data would be attributed to one app rather than two,
-which is the entire reason the beta variant exists. So this check also asserts
-that every validated manifest carries a DISTINCT id.
+ids MUST differ, because an application id is how Connect IQ identifies an
+installed app - two entries sharing one id are one app, so the beta would
+replace the production build rather than sit beside it. The variant's further
+premise, that the two would then be attributed separately in a .FIT file, is
+UNMEASURED here and is tracked as #64; it is not restated as fact. Either way,
+identical ids defeat the purpose, so this check asserts that every validated
+manifest carries a DISTINCT id.
 
 Usage:
     scripts/check_manifest_appid.py                # discover every manifest
@@ -126,8 +128,7 @@ def check_distinct(ids_by_path):
             fail(
                 f"{path} and {seen[key]} share application id {app_id} - "
                 "manifests must carry DISTINCT ids, or the variants are the same "
-                "app to Connect IQ (one replaces the other on install, and their "
-                "FIT developer data is attributed to a single app)"
+                "app to Connect IQ and one replaces the other on install"
             )
         seen[key] = path
     if len(seen) > 1:

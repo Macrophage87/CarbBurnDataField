@@ -1,27 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- BETA build variant.
      ====================
-     Byte-for-byte identical to manifest.xml except for two attributes:
+     Identical to manifest.xml apart from this comment block and two attributes:
 
-       id   - a SEPARATE application id, so the beta installs ALONGSIDE the
-              production app instead of replacing it. Connect IQ keys an
-              installed app by its application id, and it scopes FIT developer
-              data by that same id, so a ride recorded with both fields active
-              carries two independently attributed copies of the schema below.
-              That side-by-side attribution is the entire point of this file.
-       name - "@Strings.AppNameBeta" so the two entries are distinguishable in
-              the device's data-field picker.
+       id   - a SEPARATE application id. The INTENT is that the beta installs
+              ALONGSIDE the production app instead of replacing it, and that a
+              ride recorded with both fields active carries two independently
+              attributed copies of the schema below.
+
+              That is the design PREMISE of this file, not a measured fact.
+              Nobody in this repo has installed both apps on a device or looked
+              at a decoded .FIT file. Tracked as #64 (FIT attribution, with
+              byte-exact pass criteria) and #63 (whether two application ids
+              really keep separate settings - the one piece of local evidence,
+              the SDK simulator keying its .SET file by .prg FILE NAME, points
+              the other way). Do not restate either as fact until one of those
+              issues is closed with evidence. See README.md, "Settings: what is
+              known, and what is not".
+       name - "@Strings.AppNameBeta" so the two entries are intended to be
+              distinguishable in the device's data-field picker. The rendered
+              on-device label is likewise unobserved (#63).
 
      The FIT developer field ids stay 0-3, exactly as production
-     (source/CarbBurnView.mc:127-134). Same schema under a different app id is
-     what makes an A/B diff of one activity readable; renumbering here would
-     make the two sets incomparable.
+     (source/CarbBurnView.mc:127-134). Keeping the schema identical is what an
+     A/B diff of one activity would need; renumbering here would make the two
+     sets incomparable no matter how attribution turns out. So: do not
+     renumber, and do not add a beta-only field.
 
-     The <iq:products> list MUST stay identical to manifest.xml - CI compiles
-     this variant against the same 13-device matrix.
+     The <iq:products> list MUST stay identical to manifest.xml. Partially
+     enforced: monkeyc exits 102 when -d names a product a manifest omits, so
+     CI's per-device loop catches anything MISSING from this list. Nothing
+     catches a product added to one manifest and not the other outside
+     env.DEVICES - that is the #46 gap, now spanning two manifests.
 
-     This id is NOT registered on the Connect IQ Store and must never be
-     submitted there. It exists for sideloading a beta next to the store build.
+     This id was not registered on the Connect IQ Store by this project, and
+     must never be submitted there. (Whether some unrelated app already holds
+     it is not checkable from here - there is no store account.) It exists for
+     sideloading a beta next to the store build.
 -->
 <iq:manifest xmlns:iq="http://www.garmin.com/xml/connectiq" version="3">
     <iq:application entry="CarbBurnApp"
