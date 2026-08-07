@@ -155,7 +155,12 @@ Set weight to `0` to disable the glycogen readout.
 2. Open this folder in VS Code.
 3. The manifest ships with a real 32-char hex GUID. If you fork this project and
    publish your own build, replace the `id="..."` in `manifest.xml` with your own
-   GUID so the two apps don't collide.
+   GUID so the two apps don't collide — **and update `EXPECTED_PRODUCTION_ID` in
+   `scripts/check_manifest_appid.py` to match.** That constant pins the upstream
+   id, so changing only the manifest fails the `manifest-lint` check. Forking is
+   the one legitimate reason to edit both; for upstream, the id must never
+   change. (Give the beta variant its own GUID too, in `manifest.beta.xml` — the
+   lint also requires every manifest's id to be distinct.)
 4. Generate a developer key if you don't have one: **Monkey C: Generate a Developer Key**.
 5. **Monkey C: Build for Device** → produces a `.prg`. Copy it to
    `GARMIN/APPS/` on your device over USB, or run in the simulator
@@ -177,13 +182,19 @@ id, so the beta is a different app: the intent is that it sits next to the store
 build instead of replacing it, and that you can put both on one ride screen and
 compare them over the same activity.
 
-> **This is scaffolding, and today there is nothing to compare.** `beta.jungle`
-> changes the manifest and nothing else — no source file reads the application
-> id or name, and there is no `excludeAnnotations` or source-path override. So
-> at any given commit the beta is **behaviourally identical** to production, and
-> an A/B ride would compare the app to itself. The variant exists so that a
-> future divergence *can* be trialled side by side; the divergence mechanism
-> does not exist yet.
+> **This is scaffolding.** `beta.jungle` changes the manifest and nothing else —
+> no source file reads the application id or name, and there is no
+> `excludeAnnotations` or source-path override. So a beta built from a given
+> commit is **behaviourally identical to a production build from that same
+> commit**, and there is no in-tree mechanism for making them differ on purpose
+> yet ([#81](https://github.com/Macrophage87/CarbBurnDataField/issues/81)).
+>
+> That is *not* the same as "identical to what is on your device". Your
+> production app is the **published store build**, which lags `main`, so a beta
+> sideloaded from a newer `main` can differ from it substantially — the
+> comparison is store-release vs current-`main`, not app vs itself. Useful; just
+> be clear about which two things you are comparing, and record the commit you
+> built the beta from.
 
 The FIT developer field ids stay **0–3**, byte-identical to production
 (`source/CarbBurnView.mc`) — nothing is renumbered and no beta-only field is
@@ -224,8 +235,22 @@ reproduce.
 
 Copy `dist/beta/prg/CarbBurn-Beta-<your-device>.prg` to `GARMIN/APPS/` on the
 watch/head-unit over USB, eject, then add **Carb Burn (Beta)** to a ride data
-screen. CI also uploads the same per-device `.prg` set as the `beta-artifacts`
-artifact on every run.
+screen.
+
+CI also uploads the same per-device `.prg` set as the `beta-artifacts` artifact.
+**If you take the `.prg` from CI rather than building it, confirm the
+`beta-build` job concluded green first.** That upload is `if: always()`, so a
+*failed* run publishes an artifact too — including one whose application id the
+job's own guard rejected, and a beta `.prg` carrying the *production* id would
+replace your store install instead of sitting beside it. See "Known asymmetry"
+in [docs/ci.md](docs/ci.md) for the mechanism and
+[#80](https://github.com/Macrophage87/CarbBurnDataField/issues/80) for the fix.
+
+Once both are on a screen, note that **the two fields look identical while you
+ride** — the field draws `CARBS g` / `CARB g/h` / `CARB %` and never its own
+name. Only the data-field picker distinguishes them (`Carb Burn` vs
+`Carb Burn (Beta)`), so decide which screen position is which before you set
+off, and write it down.
 
 ### Settings: what is known, and what is not
 
@@ -243,11 +268,44 @@ one piece of local evidence cuts against assuming it:**
   observation has been made.
 
 Practical consequence: `tools/build_beta.sh` gives the beta a distinct file name
-(`CarbBurn-Beta-<device>.prg`), so keep it distinct when you sideload. The
-on-device question is tracked as
-[#63](https://github.com/Macrophage87/CarbBurnDataField/issues/63) — set both
-apps' settings to different values and read them back before trusting them to be
-independent.
+(`CarbBurn-Beta-<device>.prg`), so keep it distinct when you sideload.
+
+#### Before your first comparison ride: make the settings identical
+
+**Do this, and check it, or the ride tells you nothing.** A freshly sideloaded
+beta starts on the defaults in `resources/settings/properties.xml` — **FTP 250,
+LT1 0, gross efficiency 21, weight 75, carb intake 60** — while the store app
+carries whatever you have configured. Whichever way the scoping question above
+resolves, the two ends up with *separate* settings, so the beta will **not**
+inherit yours.
+
+Ride both like that and every number differs for settings reasons before any
+code difference is visible, which is exactly the confound this variant exists to
+remove.
+
+So, in Garmin Connect Mobile, open **both** apps' settings and set all five
+values the same:
+
+| Setting | Production | Beta |
+|---|---|---|
+| FTP (watts) | your value | **same** |
+| LT1 / aerobic threshold | your value | **same** |
+| Gross efficiency (%) | your value | **same** |
+| Body weight (kg) | your value | **same** |
+| Carb intake (g/h) | your value | **same** |
+
+Then re-open each page and read the values back before you ride — that costs a
+minute and is the difference between a comparison and a coincidence.
+
+#### Separately: the #63 diagnostic
+
+[#63](https://github.com/Macrophage87/CarbBurnDataField/issues/63) asks a
+different question — *are* the two settings stores actually independent? Its
+protocol deliberately sets the two apps to **different** values and reads them
+back, which is the opposite of the setup above.
+
+Run it **on its own, not on a comparison ride**, and set both apps back to
+identical values afterwards.
 
 Likewise, whether a decoder actually shows two independently attributed copies
 of the developer fields in one `.FIT` file has **not** been observed in this

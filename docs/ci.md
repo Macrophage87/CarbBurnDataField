@@ -107,7 +107,11 @@ runs, the reverse of the release side, and the artifact upload is
 bundle whose `.iq` carries the wrong application id. Lower stakes than the
 release side (that `.iq` is throwaway-key-signed, never submittable, and the
 `.prg` is the sideload channel), but check the job status before installing
-anything from a run. Tracked for reordering.
+anything from a run — `README.md`'s **Sideload** section says the same, since
+that is where someone about to install one will be reading. Reordering is
+[#80](https://github.com/Macrophage87/CarbBurnDataField/issues/80); note that the
+reorder alone would not stop publication, because the upload is `if: always()`
+by design. Checking the job status is the part that prevents the harm.
 
 See the README for how to build and sideload the beta.
 

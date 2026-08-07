@@ -69,15 +69,23 @@ VARIANT_GLOB = "manifest.*.xml"
 # CONSEQUENCE, and it is the intent rather than an oversight: changing the
 # registered id now requires editing TWO files. If you are reading this because
 # the lint just failed, the overwhelmingly likely correct action is to restore
-# manifest.xml, NOT to update this constant. Only change this line if the app
-# has genuinely been re-registered on the store under a new id - which, per the
-# manifest comment, should never happen.
+# manifest.xml, NOT to update this constant.
 #
-# Deliberately NOT pinned: the beta variant's id in manifest.beta.xml. It is not
-# registered anywhere by this project, so changing it costs nothing but a new
-# parallel install - there is no external contract to protect. What the beta id
-# must satisfy is that it DIFFERS from this one, which check_distinct() below
-# enforces independently of this pin.
+# There are exactly two legitimate reasons to edit this line:
+#   1. You FORKED this project and are publishing your own build. Then this is
+#      your id to pin - set it to your own GUID (README.md, "Build / install"
+#      step 3, says the same, so a forker meets the instruction either way).
+#   2. The app has genuinely been re-registered on the store under a new id -
+#      which, per the manifest comment, should never happen.
+#
+# Deliberately NOT pinned: the beta variant's id in manifest.beta.xml. There is
+# no STORE contract to protect - it is registered nowhere by this project - so
+# changing it costs no more than a new parallel install. It is not free of
+# in-tree references, though, and nothing checks these: the literal appears in
+# manifest.beta.xml, README.md, CHANGELOG.md and tools/build_beta.sh, and in
+# #64's byte-exact pass criteria. Change it and all five need updating by hand.
+# What the beta id MUST satisfy is that it DIFFERS from this one, which
+# check_distinct() below enforces independently of this pin.
 EXPECTED_PRODUCTION_ID = "b7e4c1a9f3d24e6cae10928f4c5d6a71"
 
 # Ids that compile fine but must never ship: the all-zero / all-f fillers and a
@@ -167,12 +175,17 @@ def check_pinned(ids_by_path):
             continue
         if app_id.lower() != EXPECTED_PRODUCTION_ID.lower():
             fail(
-                f"{path}: app id {app_id} is not the REGISTERED production id "
-                f"{EXPECTED_PRODUCTION_ID}. That id must never change - store "
-                "updates are rejected and FIT developer-data attribution breaks "
-                "(it happened once already: 9b3e238 changed it, 3e4ae5c restored "
-                "it). Restore manifest.xml; only edit EXPECTED_PRODUCTION_ID in "
-                "this script if the app has genuinely been re-registered."
+                f"{path}: app id {app_id} is not the pinned production id "
+                f"{EXPECTED_PRODUCTION_ID}.\n"
+                "  If you are working on THIS project: restore manifest.xml. The "
+                "id must never change - store updates are rejected and FIT "
+                "developer-data attribution breaks (it happened once already: "
+                "9b3e238 changed it, 3e4ae5c restored it).\n"
+                "  If you FORKED this project and are publishing your own build: "
+                "that is the one legitimate reason to change it. Set "
+                "EXPECTED_PRODUCTION_ID in this script to your own GUID so the "
+                "pin protects yours instead, and give manifest.beta.xml its own "
+                "GUID too. See README.md, 'Build / install' step 3."
             )
         print(f"OK: {path}: app id matches the pinned registered id")
 
