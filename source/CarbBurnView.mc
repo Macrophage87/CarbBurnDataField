@@ -80,7 +80,11 @@ class CarbBurnView extends WatchUi.DataField {
     // ---- Display values (reconciled where relevant) ----
     private var mGramsCho;   // total carb grams
     private var mGramsFat;   // total fat grams
-    private var mRateDisp;   // carb g/hr rolling (reconciled)
+    // mRateDisp is not private: it is the exact value setFitData() clamps into
+    // the carb_rate RECORD field, so the #59 tests pin it directly rather than
+    // recomputing mCarbRate * reconFactor() beside the production expression
+    // and pinning their own arithmetic.
+    var mRateDisp;           // carb g/hr rolling (reconciled)
     private var mPctCho;     // overall carb %
     private var mGlycPct;    // % of glycogen stores used
 
@@ -97,6 +101,27 @@ class CarbBurnView extends WatchUi.DataField {
     // but reaches ~30% at extreme legal ones (ftp=600 / lt1=50), which would
     // stop a coast from ever relaxing out of the GREEN band.
     private const INST_PCT0        = 0.0;
+
+    // ---- reconFactor() bounds (#59) ----
+    // WIRED INERT IN THIS COMMIT. The shape below is the guard; these three
+    // values are chosen so that it is a no-op over the whole reachable input
+    // domain, so this commit is behaviour-preserving and the differentials that
+    // follow are red against it. The values that close #59 land in a later
+    // commit and touch nothing but this block.
+    //
+    // RECON_MIN_KCAL = 0.0 with the `> 0.0` division guard kept alongside it is
+    //   exactly the pre-existing condition.
+    // RECON_MAX = 1.0e30 is unreachable: mModelKcal is at least one sample's
+    //   kcal = (power / GE) * dt / 4184 with power >= 1 W, GE >= 0.05
+    //   (the floor loadSettings() accepts) and dt >= 0.001 s (timerTime is
+    //   integer ms and compute() requires t > mLastTimerMs), i.e. >= 4.8e-6;
+    //   mGarminKcal comes from a Number, so <= 2.1e9. The factor therefore
+    //   cannot exceed ~4.5e14.
+    // RECON_MIN = 0.0 is unreachable: inside the branch both operands are
+    //   strictly positive, so the quotient is too.
+    private const RECON_MIN_KCAL   = 0.0;
+    private const RECON_MAX        = 1.0e30;
+    private const RECON_MIN        = 0.0;
 
     function initialize() {
         DataField.initialize();
@@ -422,9 +447,18 @@ class CarbBurnView extends WatchUi.DataField {
     }
 
     // Rescale magnitude to Garmin's calorie total when available (else 1.0).
+    //
+    // The `mModelKcal > 0.0` clause is the DIVISION guard and stays whatever
+    // RECON_MIN_KCAL is set to; the `>= RECON_MIN_KCAL` clause is the
+    // minimum-denominator floor and is a separate concern. With
+    // RECON_MIN_KCAL = 0.0 the second clause is implied by the first, which is
+    // what makes this commit behaviour-preserving.
     function reconFactor() {
-        if (mGarminKcal > 0.0 && mModelKcal > 0.0) {
-            return mGarminKcal / mModelKcal;
+        if (mGarminKcal > 0.0 && mModelKcal > 0.0 && mModelKcal >= RECON_MIN_KCAL) {
+            var r = mGarminKcal / mModelKcal;
+            if (r > RECON_MAX) { r = RECON_MAX; }
+            if (r < RECON_MIN) { r = RECON_MIN; }
+            return r;
         }
         return 1.0;
     }

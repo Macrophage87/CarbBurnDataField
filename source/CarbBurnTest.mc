@@ -422,6 +422,61 @@ function test_coast_cold_start_null_and_zero(logger) {
 
 // -------- #59: reconFactor() characterization (pre-existing contract) --------
 
+// The #59 trigger, as one sequence: a prime sample, one COAST sample during
+// which Garmin has already counted `cal` kcal, then the first POWERED sample at
+// dt = 1 s. That leaves a numerator of `cal` over a denominator of exactly one
+// sample of model kcal. Every quantity is fed in; nothing is set directly.
+(:debug)
+function cbvColdStart(power, cal) {
+    var v = cbvNewView();
+    v.compute(mkInfo(null, 1000, null));      // prime, dt = 0
+    v.compute(mkInfo(null, 2000, cal));       // coast; Garmin is already counting
+    v.compute(mkInfo(power, 3000, cal));      // first powered sample, dt = 1 s
+    return v;
+}
+
+// Model kcal for ONE 1 s sample at `power`, from the view's own public model so
+// it stays settings-independent (CarbBurnTest.mc:14-19):
+//   carbRateAt(p) = frac * (p/GE)/4184 * 3600 / 4
+//   =>  (p/GE)/4184 = carbRateAt(p) * 4 / (frac * 3600)
+(:debug)
+function cbvExpectedKcalPerSec(v, power) {
+    return v.carbRateAt(power) * 4.0 / (v.choFraction(power) * 3600.0);
+}
+
+// MECHANISM pin, green before and after the #59 bound. It asserts the two
+// halves of the accrual asymmetry that creates the defect, and nothing about
+// the factor itself - so the bound may change the factor freely and this test
+// still has to hold:
+//   numerator   - a non-null info.calories reaches mGarminKcal from the COAST
+//                 sample, i.e. before the model has counted anything (:408-410);
+//   denominator - after the first powered sample mModelKcal is exactly ONE
+//                 sample of model kcal (:350), which is < 1 kcal at any legal
+//                 setting, i.e. two orders of magnitude under any floor worth
+//                 having.
+// It also pins the #8 warm-up seed that makes the spike visible: mCarbRate is
+// the true instantaneous rate, so whatever the factor does, it multiplies a
+// correct value.
+//
+// Incidentally this is the first test in the suite to feed a non-null
+// info.calories through compute() at all - part of #48's gap, not all of it
+// (#48 also wants mGarminKcal asserted to TRACK a series; that belongs there).
+(:test)
+function test_recon_cold_start_mechanism(logger) {
+    var v = cbvColdStart(200, 1);
+    var oneSample = cbvExpectedKcalPerSec(v, 200.0);
+    var numerator = cbvNear(v.mGarminKcal, 1.0, 0.000001);
+    var denomIsOneSample = cbvNear(v.mModelKcal, oneSample, 0.0001 * oneSample);
+    var denomIsTiny = (v.mModelKcal < 1.0) && (v.mModelKcal > 0.0);
+    var seeded = cbvNear(v.mCarbRate, v.carbRateAt(200.0),
+                         0.0001 * v.carbRateAt(200.0)) && (v.mRollN == 1);
+    logger.debug("numerator=" + numerator + " denomIsOneSample=" + denomIsOneSample
+                 + " denomIsTiny=" + denomIsTiny + " seeded=" + seeded
+                 + " garminKcal=" + v.mGarminKcal + " modelKcal=" + v.mModelKcal
+                 + " oneSample=" + oneSample + " carbRate=" + v.mCarbRate);
+    return numerator && denomIsOneSample && denomIsTiny && seeded;
+}
+
 // CHARACTERIZATION. Pins the part of reconFactor()'s contract that the #59
 // bound must NOT disturb, on arms it is green for both before and after that
 // change: the plain ratio for a healthy denominator, and 1.0 on each of the
