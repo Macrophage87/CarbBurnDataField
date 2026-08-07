@@ -20,8 +20,14 @@ WHAT IT IS NOT
     Where a result depends on that (see test_dropout_carry_bounded_on_one_long_
     sample) the Monkey C assertion is written to hold under either.
 
-    It is also NOT run by CI: tools/ is in the push paths-ignore list, and no
-    workflow job executes Python against the model. It is an author-side check.
+    It is also NOT run by CI, but not for the reason an earlier revision of
+    this docstring gave. It claimed "tools/ is in the push paths-ignore list";
+    it is not. .github/workflows/ci.yml:17-24 lists two files by exact name
+    (tools/simulate_fields.py, tools/plot_speed_curves.py) and has no tools/**
+    entry, so a push touching THIS file does trigger CI. The true reason is the
+    second clause: no workflow job executes Python against the model at all
+    (ci-required needs manifest-lint, compile-unit-test, release-build; the
+    run-tests job is unwired). It is an author-side check.
 
 HOW TO USE
     python3 tools/sim_compute.py
@@ -162,6 +168,13 @@ class View:
 def mk(p,t,cal=None,speed=None,cad=None): return {'p':p,'t':t,'cal':cal,'speed':speed,'cad':cad}
 def relEq(a,b,rel):
     d=abs(a-b); m=max(abs(a),abs(b),1.0); return d<=rel*m
+def close(a,b,absTol,relTol):
+    """Mirror of cbvClose(). Callers pass absTol=0.0 and guard vacuity with an
+    explicit `x > 0.0`, so the window is purely proportional and cannot
+    degenerate into an absolute one at settings where the quantity is ~1e-11."""
+    d=abs(a-b)
+    if d<=absTol: return True
+    return d<=relTol*max(abs(a),abs(b))
 def warm(power,n,**kw):
     v=View(**kw); t=1000; v.compute(mk(power,t))
     for _ in range(n):
@@ -223,7 +236,7 @@ def run(settings):
     # test_dropout_carry_and_grace_boundary
     v=warm(400,20,**kw); held=v.carbRate; t=21000
     t+=1000; v.compute(mk(None,t)); t+=1000; v.compute(mk(None,t))
-    c1=relEq(v.carbRate,held,1e-6) and relEq(v.nullSec,2.0,1e-4)
+    c1=(held>0.0) and close(v.carbRate,held,0.0,1e-4) and relEq(v.nullSec,2.0,1e-4)
     t+=1000; v.compute(mk(None,t))
     c2=(v.carbRate<held) and relEq(v.nullSec,3.0,1e-4); afterS=v.carbRate
     t+=1000; v.compute(mk(None,t))
@@ -232,9 +245,16 @@ def run(settings):
           f"held={held:.4f} straddle={afterS:.4f} now={v.carbRate:.4f}")
 
     # test_dropout_carry_bounded_on_one_long_sample
+    # 500 kcal is fed on the active sample so recon != 1.0: without it
+    # rateDisp = carbRate * 1.0 is bit-identical to carbRate and the b6 arm is a
+    # tautology (the defect the Monkey C test carried until this revision).
     v=warm(400,20,**kw); t=21000; k0=v.modelKcal
-    t+=1000; v.compute(mk(400,t)); kps=v.modelKcal-k0
+    t+=1000; v.compute(mk(400,t,cal=500)); kps=v.modelKcal-k0
     pctHeld=v.pct; before=v.modelKcal
+    # asserted BEFORE the coast: afterwards both sides are ~0 and vacuous again
+    b6=(v.recon!=1.0 and v.carbRate>0.0
+        and not close(v.rateDisp,v.carbRate,0.0,1e-4)
+        and close(v.rateDisp,f32(v.carbRate*v.recon),0.0,1e-4))
     t+=300000; v.compute(mk(None,t))
     carried=(v.modelKcal-before)/kps
     b1=(kps>0.0 and 2.0<carried<3.0)
@@ -242,7 +262,7 @@ def run(settings):
     b3=(v.pct==0.0 and v.pct==v.pct)
     b4=(v.fluxLow==True and v.carbPctStr()=="--")
     b5=(v.zoneColor()==GREY)
-    check("carry_bounded_long", b1 and b2 and b3 and b4 and b5,
+    check("carry_bounded_long", b1 and b2 and b3 and b4 and b5 and b6,
           f"carried={carried:.4f}s pct={v.pct} rate={v.carbRate:.3g}")
 
     # test_carry_rearm_requires_consecutive_active
@@ -262,7 +282,9 @@ def run(settings):
     t=22000
     vF.compute(mk(None,t)); vS.compute(mk(None,t,speed=0.0)); vC.compute(mk(None,t,speed=12.0,cad=0))
     check("carry_suppressed_stopped",
-          relEq(vF.carbRate,held,1e-6) and vS.carbRate<held and vC.carbRate<held)
+          (held>0.0) and close(vF.carbRate,held,0.0,1e-4)
+          and vS.carbRate<held and vC.carbRate<held,
+          f"held={held:.6g} free={vF.carbRate:.6g}")
 
     # test_coast_cold_start_null_and_zero
     v=View(**kw); v.compute(mk(None,1000)); v.compute(mk(None,2000))
@@ -275,7 +297,8 @@ def run(settings):
     for _ in range(30):
         t+=1000; vD.compute(mk(300,t)); t+=1000; vD.compute(mk(0,t))
     pd=vD.pct
-    check("duty_cycle_invariant", vD.carbRate<0.8*vFull.carbRate and abs(pc-pd)<0.5,
+    check("duty_cycle_invariant",
+          vD.carbRate<0.8*vFull.carbRate and pc>0.0 and close(pc,pd,0.0,1e-4),
           f"clean={pc:.4f} duty={pd:.4f} rateFull={vFull.carbRate:.2f} rateDuty={vD.carbRate:.2f}")
 
     # test_flux_floor_hysteresis
@@ -307,10 +330,12 @@ def run(settings):
     for _ in range(60):
         t+=1000; v.compute(mk(None,t))
     r1=(v.zoneColor()==GREY); r2=(v.carbPctStr()=="--")
-    r3=(preR>0.0 and v.carbRate<0.02*preR); r4=relEq(v.pct,pctB,1e-4)
+    r3=(preR>0.0 and v.carbRate<0.02*preR)
+    r4=(pctB>0.0 and close(v.pct,pctB,0.0,1e-4))
     t+=1000; v.compute(mk(400,t))
     r5=(v.fluxLow==False and v.carbPctStr()!="--")
-    r6=relEq(v.pct,f32(v.cho(400)*f32(100.0)),1e-4)
+    tgt=f32(v.cho(400)*f32(100.0))
+    r6=(tgt>0.0 and close(v.pct,tgt,0.0,1e-4))
     check("resume_recolours", r1 and r2 and r3 and r4 and r5 and r6,
           f"pctBefore={pctB:.4f} pctAfterCoast->{v.pct:.4f} flux={v.totalFlux():.4f}")
 
@@ -408,12 +433,15 @@ def demo_superseded_pin():
               f"-> superseded pin would {'FAIL' if bad else 'pass'}")
     print(f"  witnesses found: {hits}")
 
+# (500,499,21) replaces (600,599,21): settings.xml caps lt1 at 500, so the
+# 600/599 tuple was ILLEGAL and the vacuity witness this file is supposed to
+# exercise was never actually run. 500/499 is the reachable narrow span - carb
+# rate 3.83e-11 g/h, derived carb % 9.36e-12 at 400 W.
 SET=[(250,0,21),(50,19,28),(600,50,15),(400,0,21),(50,6,28),(189,16,21),(300,299,28),
-     (540,18,28),(350,144,28),(600,599,21),(565,264,21),(50,49,28),(120,84,15)]
+     (540,18,28),(350,144,28),(500,499,21),(565,264,21),(50,49,28),(120,84,15)]
 for s in SET:
     run(s); run2(s)
 demo_superseded_pin()
 print("\n==== FAILURES:", FAIL if FAIL else "none", "====")
 import sys
 sys.exit(1 if FAIL else 0)
-print("\n==== FAILURES:", FAIL if FAIL else "none", "====")

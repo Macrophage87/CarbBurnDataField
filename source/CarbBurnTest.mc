@@ -16,8 +16,17 @@ using Toybox.Activity;
 // gross-efficiency. It compares against the view's own model (carbRateAt(),
 // mFatMaxRate) or sets rolling state directly, because a simulator carries
 // persisted device settings that differ from the repo defaults (#28), and
-// settings.xml permits FTP 50-600 and GE 15-30. Assertions that depended on
-// the model's 85%-at-FTP anchor sat on a knife-edge at FTP=400 and are gone.
+// settings.xml permits FTP 50-600, LT1 0-500 and GE 15-28. Assertions that
+// depended on the model's 85%-at-FTP anchor sat on a knife-edge at FTP=400 and
+// are gone.
+//
+// THOSE RANGES ARE LOAD-BEARING, not decoration. Several assertions below are
+// non-vacuous only because a tolerance was chosen against the smallest value
+// the model can produce anywhere in that box, so a comment quoting an
+// OUT-OF-RANGE witness hides the very defect it is meant to warn about. Two
+// were shipped: this paragraph said "GE 15-30" (settings.xml says 15-28) and
+// cbvClose's said "lt1=599" (settings.xml caps lt1 at 500). Re-read
+// resources/settings/settings.xml before trusting any witness quoted here.
 //
 
 // ---- test seam ----------------------------------------------------------
@@ -94,9 +103,21 @@ function cbvRelEq(a, b, rel) {
 // Comparison with an EXPLICIT absolute window as well as a relative one, for
 // quantities that can legitimately be far below 1.0. cbvRelEq's m < 1.0 floor
 // turns any relative tolerance into an absolute one down there, which makes an
-// assertion vacuous: at ftp=600 / lt1=599 the carb % at 400 W is 9.4e-12, so
-// cbvRelEq(pct, target, 1e-4) admits 0.0 and would pass with the value deleted.
-// Here the absolute window is stated, so it can be chosen small enough to matter.
+// assertion vacuous.
+//
+// The witness has to be REACHABLE. An earlier revision of this comment cited
+// ftp=600 / lt1=599; settings.xml caps lt1 at 500, so that pair can never
+// occur and the warning pointed at nothing. The real one is ftp=500 / lt1=499,
+// both legal: the logistic argument clamps at -30, so choFraction(400) =
+// 9.3576e-14, the derived carb % is 9.3576e-12 and the rolling carb rate is
+// 3.8340e-11 g/h. At those magnitudes cbvRelEq(x, target, 1e-6) admits 0.0 -
+// and so does cbvClose(x, target, 1e-7, 1e-4), which is why picking a
+// comfortable-looking small absTol is not a fix either.
+//
+// So: callers comparing two quantities that can never BOTH be legitimately
+// zero pass absTol = 0.0 and state the anti-vacuity guard themselves
+// (`target > 0.0`). The window is then purely proportional, it scales all the
+// way down, and there is no constant to re-derive when the model changes.
 (:debug)
 function cbvClose(a, b, absTol, relTol) {
     var d = a - b;
@@ -368,7 +389,15 @@ function test_dropout_carry_and_grace_boundary(logger) {
     t += 1000; v.compute(mkInfo(null, t, null));       // 1.0 -> 2.0, fully carried
     // Carried samples re-run the ACTIVE path at the same power, and the EMA is
     // already at that fixed point, so the rate must not move at all.
-    var carriedFlat = cbvRelEq(v.mCarbRate, held, 0.000001)
+    //
+    // NOT cbvRelEq: its m < 1.0 floor turned that 1e-6 into an ABSOLUTE 1e-6,
+    // and at the legal (ftp 500, lt1 499) `held` is 3.83e-11 - so this arm
+    // reported true with the whole DROPOUT carry deleted. A proportional window
+    // (absTol 0.0) plus an explicit `held > 0.0` cannot degenerate: one coasted
+    // second moves the rate by 10 %, which is 1000x this window at every legal
+    // setting.
+    var carriedFlat = (held > 0.0)
+                      && cbvClose(v.mCarbRate, held, 0.0, 0.0001)
                       && cbvRelEq(v.mNullSec, 2.0, 0.0001);
     t += 1000; v.compute(mkInfo(null, t, null));       // 2.0 -> 3.0: 0.5 carried, 0.5 coast
     var straddled = (v.mCarbRate < held) && cbvRelEq(v.mNullSec, 3.0, 0.0001);
@@ -402,11 +431,31 @@ function test_dropout_carry_bounded_on_one_long_sample(logger) {
     var v = cbvWarmView(400, 20);
     var t = 21000;
     // Measure this view's kcal for exactly 1 s of active 400 W.
+    //
+    // The Garmin calorie total fed on this sample is what gives the mRateDisp
+    // assertion below any content. mRateDisp = mCarbRate * reconFactor(), and
+    // with no calorie feed reconFactor() returns exactly 1.0, so the two sides
+    // are bit-identical BY CONSTRUCTION and the assertion cannot fail whatever
+    // the code does - it was a tautology, and #33's "assert on mRateDisp" went
+    // unsatisfied. 500 kcal against the ~7-14 kcal this view has modelled by
+    // now puts recon in the tens at every legal gross efficiency. It touches
+    // nothing else asserted here: recon feeds only the display values, not
+    // mCarbRate / mFatRate / mCarbPctRoll / mFluxLow.
     var k0 = v.mModelKcal;
-    t += 1000; v.compute(mkInfo(400, t, null));
+    t += 1000; v.compute(mkInfo(400, t, 500));
     var kcalPerSec = v.mModelKcal - k0;
     var pctHeld = v.mCarbPctRoll;
     var before  = v.mModelKcal;
+
+    // #33 requires the fix to be asserted on the DISPLAYED rate. Asserted HERE,
+    // before the coast, because afterwards both mRateDisp and mCarbRate are ~0
+    // and comparing them is vacuous for a second, independent reason.
+    // dispDiffers is the anti-tautology arm: the two sides must be different
+    // numbers before an equality between them proves anything.
+    var reconNow    = v.reconFactor();
+    var dispDiffers = (cbvClose(v.mRateDisp, v.mCarbRate, 0.0, 0.0001) == false);
+    var dispTracks  = (reconNow != 1.0) && (v.mCarbRate > 0.0) && dispDiffers
+                      && cbvClose(v.mRateDisp, v.mCarbRate * reconNow, 0.0, 0.0001);
 
     // ONE 300 s gap with no reading. Carry must be <= SIGNAL_GRACE_S (2.5 s).
     t += 300000; v.compute(mkInfo(null, t, null));
@@ -433,13 +482,10 @@ function test_dropout_carry_bounded_on_one_long_sample(logger) {
                          && ((pctAbs < 0.000001) || cbvRelEq(v.mCarbPctRoll, pctHeld, 0.0001));
     var floorEngaged   = (v.mFluxLow == true) && v.carbPctStr().equals("--");
     var greyNow        = (v.zoneColor(Graphics.COLOR_LT_GRAY, true) == Graphics.COLOR_LT_GRAY);
-    // The DISPLAYED rate is what #33's spec requires the fix to be asserted on:
-    // with no Garmin calorie feed recon is 1.0, so it must track mCarbRate.
-    var dispTracks = cbvClose(v.mRateDisp, v.mCarbRate, 0.000001, 0.0001);
     logger.debug("carried=" + carried + "s bounded=" + bounded + " pctBefore=" + pctHeld
                  + " ratesCollapsed=" + ratesCollapsed + " pctGuarded=" + pctGuarded
                  + " floorEngaged=" + floorEngaged + " grey=" + greyNow
-                 + " dispTracks=" + dispTracks
+                 + " dispTracks=" + dispTracks + " recon=" + reconNow
                  + " pct=" + v.mCarbPctRoll + " carbRate=" + v.mCarbRate);
     return bounded && ratesCollapsed && pctGuarded && floorEngaged && greyNow && dispTracks;
 }
@@ -573,7 +619,12 @@ function test_carry_suppressed_when_stopped(logger) {
     var t = 22000;
     vFree.compute(mkInfoFull(null, t, null, null, null));   // unknown speed/cadence
     vStop.compute(mkInfoFull(null, t, null, 0.0,  null));   // reported STOP
-    var carriedWhenUnknown = cbvRelEq(vFree.mCarbRate, held, 0.000001);
+    // Proportional window plus an explicit anti-vacuity guard, for the reason
+    // given at cbvClose: with cbvRelEq's absolute 1e-6 floor this arm - and
+    // therefore this whole test, whose other two arms only require a DECAY -
+    // passed at (ftp 500, lt1 499) with the DROPOUT carry deleted.
+    var carriedWhenUnknown = (held > 0.0)
+                             && cbvClose(vFree.mCarbRate, held, 0.0, 0.0001);
     var coastedWhenStopped = (vStop.mCarbRate < held);
     // Cadence alone must do it too (a rider freewheeling downhill at speed).
     var vCad = cbvWarmView(400, 20);
@@ -633,10 +684,12 @@ function test_derived_pct_duty_cycle_invariant(logger) {
     // The RATES are roughly halved by the lost samples...
     var ratesLower = (vDuty.mCarbRate < 0.8 * vFull.mCarbRate);
     // ...but the RATIO is not: proportional decay preserves it exactly, so this
-    // is a tight relative comparison with a tiny absolute floor rather than the
-    // 0.5 pp window an earlier revision used - at settings where the percentage
-    // itself is ~1e-11, a 0.5 pp window would pass with the value deleted.
-    var pctSame = cbvClose(pctClean, pctDuty, 0.0000001, 0.0001);
+    // is a purely relative comparison rather than the 0.5 pp window an earlier
+    // revision used. The absolute floor is 0.0 on purpose: at (ftp 500,
+    // lt1 499) the percentage itself is 9.36e-12, so a 0.5 pp window - and the
+    // 1e-7 that replaced it - both admit 0.0. `pctClean > 0.0` is the
+    // anti-vacuity guard that an absolute floor was standing in for.
+    var pctSame = (pctClean > 0.0) && cbvClose(pctClean, pctDuty, 0.0, 0.0001);
     logger.debug("pctClean=" + pctClean + " pctDuty=" + pctDuty
                  + " ratesLower=" + ratesLower + " pctSame=" + pctSame
                  + " rateFull=" + vFull.mCarbRate + " rateDuty=" + vDuty.mCarbRate);
@@ -692,10 +745,17 @@ function test_flux_floor_hysteresis(logger) {
 }
 
 // The thresholds AT their boundary values, which the test above cannot reach: it
-// steps the clock, and a null sample decays the rates ~10% before the latch reads
-// them (6.0 -> 5.4), so it only brackets the constants. Re-using the SAME
-// timerTime gives dt = 0, which skips the whole accrual block while still running
-// the derivation - so the latch sees exactly the value that was set.
+// steps the clock, so a null sample decays the rates before the latch reads them
+// and it only BRACKETS the constants. How far it decays is not uniform across
+// that test's arms, and the arms are not equally strong as a result: arm 3
+// (holdsAboveEngage) steps dt = 1, so 6.0 -> 5.4, which is genuinely above
+// FLUX_ENGAGE = 5 and discriminating; arm 1 (holdsBelowRelease) follows the
+// prime at t=1000 with t=2000 then += 1000, so dt = 2, steadyAlpha(2) = 0.19 and
+// 6.0 -> 4.86 - BELOW engage, so that arm holds for the wrong reason. The
+// boundary test below is what actually covers the intent.
+//
+// Re-using the SAME timerTime gives dt = 0, which skips the whole accrual block
+// while still running the derivation - so the latch sees exactly the value set.
 //
 // Both comparisons are strict, so the boundary values themselves do NOT switch:
 // release needs flux > FLUX_RELEASE, engage needs flux < FLUX_ENGAGE.
@@ -791,15 +851,19 @@ function test_resume_after_long_gap_recolours_at_once(logger) {
     // wrongly. Asserted as "unchanged", not "still >= 85", so it holds at any
     // legal settings (400 W may sit below LT1).
     var ratesGone   = (preRate > 0.0) && (v.mCarbRate < 0.02 * preRate);
-    // Explicit absolute floor: cbvRelEq would degenerate to a 1e-4 ABSOLUTE
-    // window at settings where the percentage is tiny, and admit 0.0.
-    var pctUnchanged = cbvClose(v.mCarbPctRoll, pctBefore, 0.0000001, 0.0001);
+    // Purely proportional window with an explicit anti-vacuity guard: cbvRelEq
+    // would degenerate to a 1e-4 ABSOLUTE window at settings where the
+    // percentage is tiny and admit 0.0 - and so does a 1e-7 absolute floor,
+    // because at (ftp 500, lt1 499) the percentage is 9.36e-12.
+    var pctUnchanged = (pctBefore > 0.0)
+                       && cbvClose(v.mCarbPctRoll, pctBefore, 0.0, 0.0001);
     t += 1000; v.compute(mkInfo(400, t, null));        // one ACTIVE sample
     var releasedAtOnce = (v.mFluxLow == false) && (v.carbPctStr().equals("--") == false);
     // Proportional decay plus a proportional pull means the percentage never
     // left the mix at 400 W, so it reports it exactly on resume.
     var pctTarget = v.choFraction(400.0) * 100.0;
-    var near = cbvClose(v.mCarbPctRoll, pctTarget, 0.0000001, 0.0001);
+    var near = (pctTarget > 0.0)
+               && cbvClose(v.mCarbPctRoll, pctTarget, 0.0, 0.0001);
     logger.debug("greyAtRest=" + greyAtRest + " dashAtRest=" + dashAtRest
                  + " ratesGone=" + ratesGone + " pctUnchanged=" + pctUnchanged
                  + " releasedAtOnce=" + releasedAtOnce + " near=" + near
@@ -830,12 +894,18 @@ function test_compute_drives_red(logger) {
     return pctHigh && released && isRed && numeric;
 }
 
-// ORANGE, GREEN, and the ORDER of the branches - none of which had any coverage.
-// The gap matters beyond completeness: a pure REORDER of the RED and ORANGE tests
-// (which would make RED unreachable, since every RED value is also >= 50) changes
-// no literal and no expression, so neither the mutation-sensitive value tests nor
-// a source-literal diff can see it. A test at 90 and a test at 60 together can:
-// reorder them and the 90 arm returns ORANGE.
+// ORANGE, GREEN, and the ORDER of the branches. A pure REORDER of the RED and
+// ORANGE tests makes RED unreachable (every RED value is also >= 50) while
+// changing no literal and no expression, so a source-literal diff cannot see it.
+//
+// An earlier revision of this comment went further and said no existing test
+// could see it either. That was wrong, and measured to be wrong: applying the
+// reorder to zoneColor() and running the suite reds THREE tests -
+// test_flux_floor_precedes_red and test_compute_drives_red, both of which
+// predate this comment, and this one. The commit message said so; the comment a
+// future reader meets did not. What this test adds is the two bands that had no
+// coverage at all (ORANGE and GREEN) and a deliberate rather than incidental
+// guard on the order: reorder the branches and the 90 arm returns ORANGE.
 //
 // The GREEN arm is asserted RELATIVE to mPctFatMax rather than at a fixed
 // percentage, because that threshold is a model output and ranges from 0.004 %
@@ -844,6 +914,12 @@ function test_compute_drives_red(logger) {
 // runner's settings, which is exactly the #34 defect. Where mPctFatMax >= 50 the
 // GREEN band is genuinely EMPTY (ORANGE pre-empts it), and the test asserts that
 // instead of pretending otherwise.
+//
+// Both arms are reached in practice. Measured by running tools/sim_compute.py
+// over its 13 settings tuples: 5 have an empty GREEN band (mPctFatMax =
+// 55.3770, 66.2199, 66.0282, 65.9171, 68.1455) and 8 do not. The commit message
+// that introduced this test said "6 ... and 7"; that figure was never measured
+// and is wrong. Commit messages are immutable, so the correction lives here.
 (:test)
 function test_zone_branch_order_and_bands(logger) {
     var v = cbvNewView();
