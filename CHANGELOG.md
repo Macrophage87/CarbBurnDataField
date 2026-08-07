@@ -11,15 +11,21 @@ All notable changes to **Carb Burn** are documented here. Format based on
   build the same source under a second application id
   (`3aa0137493fa4511ba559720835b1ab5`), so the beta installs *alongside* the
   store build instead of replacing it and both can run on one ride. The FIT
-  developer field ids stay 0–3, unchanged, so the two apps write the same schema
-  under different attribution. `tools/build_beta.sh` produces the packaged `.iq`
+  developer field ids stay 0–3, unchanged, so both apps declare the same schema.
+  Whether a decoder then attributes the two sets *separately* in one activity is
+  the design premise of this variant and has **not** been measured here — see
+  [#64](https://github.com/Macrophage87/CarbBurnDataField/issues/64), and
+  [#63](https://github.com/Macrophage87/CarbBurnDataField/issues/63) for the
+  matching settings question. `tools/build_beta.sh` produces the packaged `.iq`
   and a release `.prg` per device (and, unlike `build_iq.sh`, refuses to mint a
   signing key). CI gains a required `beta-build` job that release-compiles the
   variant for all 13 devices and asserts the built `.prg` carry the beta id;
   `release-build` gained the mirror of that assertion, so the shipped store
   artifacts are now checked to carry the *registered* id and not the beta one.
-  `scripts/check_manifest_appid.py` now validates every manifest and fails if
-  two share an application id. No behaviour change to the field itself — the
+  `scripts/check_manifest_appid.py` now validates every manifest, fails if two
+  share an application id, and **pins the registered production id as a
+  literal**, so an edit to `manifest.xml`'s id fails the lint instead of
+  compiling green. No behaviour change to the field itself — the
   beta is **behaviourally identical** to production at every commit, since
   `beta.jungle` changes only the manifest; it is scaffolding for a future
   side-by-side trial, not a comparison that can be run today.
