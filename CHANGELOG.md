@@ -5,6 +5,24 @@ All notable changes to **Carb Burn** are documented here. Format based on
 
 ## [Unreleased]
 
+### Fixed
+
+- **The first minute of a ride no longer records an inflated carb/fat rate.**
+  The field rescales its power model to your watch's own calorie total. That
+  rescaling divided by however much energy the *model* had counted so far, and
+  at the first pedalling sample of a session that is a fraction of a kcal — so
+  if your watch had already counted any calories (a power meter that wakes late,
+  a timer started before you roll out, a traffic light at the start), the
+  rescaling factor could reach several hundred. The `carb_rate` and `fat_rate`
+  values written into the FIT file were multiplied by it: measured in the
+  simulator, 487 g/h recorded against a true 111 g/h, and up to 10,650 g/h after
+  a neutral roll-out. Those numbers are plausible-looking sprint values, not
+  obvious errors, which is what made this worth fixing.
+  The rescaling is now bounded: it is not applied at all until the model has
+  counted 10 kcal (about 44 s at 200 W, during which the field shows the pure
+  power model), and the factor itself is held between 0.5x and 3x. Cumulative
+  carbohydrate over that window changes by about 1.4 g.
+
 ### Added
 
 - **Speed-axis white-paper figure (Figure 3).** `tools/plot_speed_curves.py`

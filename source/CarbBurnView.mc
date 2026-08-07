@@ -103,25 +103,48 @@ class CarbBurnView extends WatchUi.DataField {
     private const INST_PCT0        = 0.0;
 
     // ---- reconFactor() bounds (#59) ----
-    // WIRED INERT IN THIS COMMIT. The shape below is the guard; these three
-    // values are chosen so that it is a no-op over the whole reachable input
-    // domain, so this commit is behaviour-preserving and the differentials that
-    // follow are red against it. The values that close #59 land in a later
-    // commit and touch nothing but this block.
+    // reconFactor() guarded a ZERO denominator but not a SMALL one. At the
+    // first powered sample of a session the denominator is a single sample of
+    // model kcal (0.227625 at 200 W, measured), so the factor was Garmin's
+    // whole cumulative kcal divided by that - unbounded, and it multiplies the
+    // g/h written to the carb_rate and fat_rate FIT RECORD fields. Measured at
+    // 42c4dbf: 4.4x at 200 W with the smallest reportable calorie count, 351x
+    // after a neutral roll-out, writing 487 and 10650 g/h against true rates of
+    // 110.9 and 30.3.
     //
-    // RECON_MIN_KCAL = 0.0 with the `> 0.0` division guard kept alongside it is
-    //   exactly the pre-existing condition.
-    // RECON_MAX = 1.0e30 is unreachable: mModelKcal is at least one sample's
-    //   kcal = (power / GE) * dt / 4184 with power >= 1 W, GE >= 0.05
-    //   (the floor loadSettings() accepts) and dt >= 0.001 s (timerTime is
-    //   integer ms and compute() requires t > mLastTimerMs), i.e. >= 4.8e-6;
-    //   mGarminKcal comes from a Number, so <= 2.1e9. The factor therefore
-    //   cannot exceed ~4.5e14.
-    // RECON_MIN = 0.0 is unreachable: inside the branch both operands are
-    //   strictly positive, so the quotient is too.
-    private const RECON_MIN_KCAL   = 0.0;
-    private const RECON_MAX        = 1.0e30;
-    private const RECON_MIN        = 0.0;
+    // RECON_MIN_KCAL - minimum denominator. Below it the field reports the pure
+    //   power model (factor 1.0), which is the only other self-consistent scale
+    //   it already owns; it does not invent a number. 10.0 kcal is ~44 s at
+    //   200 W and ~88 s at 100 W, over which the un-reconciled total differs
+    //   from the reconciled one by ~1.35 g of carbohydrate.
+    // RECON_MAX - upper bound, and the load-bearing half. A floor alone only
+    //   converts an unbounded error into a large one: measured, a 10 kcal floor
+    //   with no clamp still writes 664-775 g/h at the release sample after a
+    //   15-minute roll-out, against a true 110.9.
+    //   3.0 rather than 2.0 deliberately: 2.0 is exactly the third arm pinned
+    //   by test_zonecolor_recon_invariant, so a bound of 2.0 would leave that
+    //   test passing on the coincidence that clamping 2.0 to 2.0 is a no-op.
+    //   3.0 also sits above every factor produced by any whole-ride sweep run
+    //   on this model (maximum observed 1.435102).
+    // RECON_MIN - lower bound. The clamp is symmetric because info.calories is
+    //   an integer: the same small-denominator window can also produce a factor
+    //   BELOW 1.0 when it truncates, so #59's direction of error is not
+    //   unambiguously upward. Defensive: no sweep has reached it (minimum
+    //   observed 0.959536), and a binding lower clamp INFLATES reported grams,
+    //   so it sits well below anything measured rather than close to 1.0.
+    //
+    // The bound is a per-sample step in the reported rate when it engages or
+    // disengages (measured 111 -> 333 g/h at the release sample). In cumulative
+    // grams that step is ~1.4 g -> ~4 g, i.e. negligible against the product,
+    // but it is a discontinuity and it is deliberate.
+    //
+    // These bound the ARITHMETIC only. Nothing here gates a setData() call:
+    // record-scope FIT fields latch, so a skipped write would re-emit the
+    // previous value rather than produce a gap, and setFitData() stays
+    // unconditional for that reason.
+    private const RECON_MIN_KCAL   = 10.0;
+    private const RECON_MAX        = 3.0;
+    private const RECON_MIN        = 0.5;
 
     function initialize() {
         DataField.initialize();
@@ -448,11 +471,12 @@ class CarbBurnView extends WatchUi.DataField {
 
     // Rescale magnitude to Garmin's calorie total when available (else 1.0).
     //
-    // The `mModelKcal > 0.0` clause is the DIVISION guard and stays whatever
-    // RECON_MIN_KCAL is set to; the `>= RECON_MIN_KCAL` clause is the
-    // minimum-denominator floor and is a separate concern. With
-    // RECON_MIN_KCAL = 0.0 the second clause is implied by the first, which is
-    // what makes this commit behaviour-preserving.
+    // Bounded per #59: see the RECON_* block above for why each bound exists
+    // and why the clamp, not the floor, is the load-bearing one.
+    //
+    // The `mModelKcal > 0.0` clause is the DIVISION guard and is kept
+    // independently of RECON_MIN_KCAL: the floor is policy and may be retuned,
+    // the division must stay guarded either way.
     function reconFactor() {
         if (mGarminKcal > 0.0 && mModelKcal > 0.0 && mModelKcal >= RECON_MIN_KCAL) {
             var r = mGarminKcal / mModelKcal;
