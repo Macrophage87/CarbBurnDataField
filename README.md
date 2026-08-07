@@ -165,7 +165,12 @@ Set weight to `0` to disable the glycogen readout.
 2. Open this folder in VS Code.
 3. The manifest ships with a real 32-char hex GUID. If you fork this project and
    publish your own build, replace the `id="..."` in `manifest.xml` with your own
-   GUID so the two apps don't collide.
+   GUID so the two apps don't collide — **and update `EXPECTED_PRODUCTION_ID` in
+   `scripts/check_manifest_appid.py` to match.** That constant pins the upstream
+   id, so changing only the manifest fails the `manifest-lint` check. Forking is
+   the one legitimate reason to edit both; for upstream, the id must never
+   change. (Give the beta variant its own GUID too, in `manifest.beta.xml` — the
+   lint also requires every manifest's id to be distinct.)
 4. Generate a developer key if you don't have one: **Monkey C: Generate a Developer Key**.
 5. **Monkey C: Build for Device** → produces a `.prg`. Copy it to
    `GARMIN/APPS/` on your device over USB, or run in the simulator
@@ -177,6 +182,145 @@ Set weight to `0` to disable the glycogen readout.
    generating a key if you have none), then upload it at
    [apps.garmin.com/developer/upload](https://apps.garmin.com/developer/upload).
    The VS Code equivalent is **Monkey C: Export Project**.
+
+## Beta build — install it *alongside* the production app
+
+`manifest.beta.xml` + `beta.jungle` build the **same source** under a **second
+application id** (`3aa0137493fa4511ba559720835b1ab5`, display name
+**Carb Burn (Beta)**). Connect IQ identifies an installed app by its application
+id, so the beta is a different app: the intent is that it sits next to the store
+build instead of replacing it, and that you can put both on one ride screen and
+compare them over the same activity.
+
+> **This is scaffolding.** `beta.jungle` changes the manifest and nothing else —
+> no source file reads the application id or name, and there is no
+> `excludeAnnotations` or source-path override. So a beta built from a given
+> commit is **behaviourally identical to a production build from that same
+> commit**, and there is no in-tree mechanism for making them differ on purpose
+> yet ([#81](https://github.com/Macrophage87/CarbBurnDataField/issues/81)).
+>
+> That is *not* the same as "identical to what is on your device". Your
+> production app is the **published store build**, which lags `main`, so a beta
+> sideloaded from a newer `main` can differ from it substantially — the
+> comparison is store-release vs current-`main`, not app vs itself. Useful; just
+> be clear about which two things you are comparing, and record the commit you
+> built the beta from.
+
+The FIT developer field ids stay **0–3**, byte-identical to production
+(`source/CarbBurnView.mc`) — nothing is renumbered and no beta-only field is
+added. Keeping the schema identical is what a one-activity A/B diff would need.
+Whether the two apps are actually attributed separately in the `.FIT` file is a
+premise, not a measurement; see "Settings" below.
+
+**The beta id was not registered on the Connect IQ Store by this project. Never
+upload it there.**
+
+### Build
+
+```sh
+tools/build_beta.sh -y /path/to/developer_key.der
+# or:  CIQ_DEVELOPER_KEY=/path/to/developer_key.der  tools/build_beta.sh
+```
+
+It produces both artifacts:
+
+| Artifact | Path | For |
+|---|---|---|
+| package | `dist/beta/CarbBurn-Beta-<version>.iq` | the packaged build |
+| per-device | `dist/beta/prg/CarbBurn-Beta-<device>.prg` | direct sideload over USB |
+
+The device list is read out of `manifest.beta.xml` with a real XML parser, so it
+is exactly the products that manifest declares (13 today, the same list as
+production) regardless of how the file is formatted. That used to be a
+line-oriented `sed`, and it was not: of nine reformattings of the same 13
+products that `monkeyc` compiles happily, the `sed` returned the right list for
+only four, and two of the failures returned a silent *subset* — one of them
+built 1 device of 13 and reported `1/1 OK`.
+
+Unlike `tools/build_iq.sh`, this script **never generates a signing key**: pass
+one or it exits non-zero. A key you did not choose is a key you cannot
+reproduce.
+
+### Sideload
+
+Copy `dist/beta/prg/CarbBurn-Beta-<your-device>.prg` to `GARMIN/APPS/` on the
+watch/head-unit over USB, eject, then add **Carb Burn (Beta)** to a ride data
+screen.
+
+CI also uploads the same per-device `.prg` set as the `beta-artifacts` artifact.
+**If you take the `.prg` from CI rather than building it, confirm the
+`beta-build` job concluded green first.** That upload is `if: always()`, so a
+*failed* run publishes an artifact too — including one whose application id the
+job's own guard rejected, and a beta `.prg` carrying the *production* id would
+replace your store install instead of sitting beside it. See "Known asymmetry"
+in [docs/ci.md](docs/ci.md) for the mechanism and
+[#80](https://github.com/Macrophage87/CarbBurnDataField/issues/80) for the fix.
+
+Once both are on a screen, note that **the two fields look identical while you
+ride** — the field draws `CARBS g` / `CARB g/h` / `CARB %` and never its own
+name. Only the data-field picker distinguishes them (`Carb Burn` vs
+`Carb Burn (Beta)`), so decide which screen position is which before you set
+off, and write it down.
+
+### Settings: what is known, and what is not
+
+The two apps are separate installs, so the intent is that each keeps its own
+FTP / LT1 / GE / weight / carb-intake values. **That is not verified here, and
+one piece of local evidence cuts against assuming it:**
+
+- *Measured (SDK 9.2.0 simulator):* persisted app settings are written to
+  `GARMIN/APPS/SETTINGS/<PRG-BASENAME>.SET` — keyed by the **`.prg` file name**,
+  and the file contains no application id at all. In the simulator, two builds
+  with different ids but the same `.prg` name would therefore share one settings
+  blob.
+- *Not measured:* how a real device scopes settings between two installed apps,
+  and how Garmin Connect Mobile presents two settings pages. No on-device
+  observation has been made.
+
+Practical consequence: `tools/build_beta.sh` gives the beta a distinct file name
+(`CarbBurn-Beta-<device>.prg`), so keep it distinct when you sideload.
+
+#### Before your first comparison ride: make the settings identical
+
+**Do this, and check it, or the ride tells you nothing.** A freshly sideloaded
+beta starts on the defaults in `resources/settings/properties.xml` — **FTP 250,
+LT1 0, gross efficiency 21, weight 75, carb intake 60** — while the store app
+carries whatever you have configured. Whichever way the scoping question above
+resolves, the two ends up with *separate* settings, so the beta will **not**
+inherit yours.
+
+Ride both like that and every number differs for settings reasons before any
+code difference is visible, which is exactly the confound this variant exists to
+remove.
+
+So, in Garmin Connect Mobile, open **both** apps' settings and set all five
+values the same:
+
+| Setting | Production | Beta |
+|---|---|---|
+| FTP (watts) | your value | **same** |
+| LT1 / aerobic threshold | your value | **same** |
+| Gross efficiency (%) | your value | **same** |
+| Body weight (kg) | your value | **same** |
+| Carb intake (g/h) | your value | **same** |
+
+Then re-open each page and read the values back before you ride — that costs a
+minute and is the difference between a comparison and a coincidence.
+
+#### Separately: the #63 diagnostic
+
+[#63](https://github.com/Macrophage87/CarbBurnDataField/issues/63) asks a
+different question — *are* the two settings stores actually independent? Its
+protocol deliberately sets the two apps to **different** values and reads them
+back, which is the opposite of the setup above.
+
+Run it **on its own, not on a comparison ride**, and set both apps back to
+identical values afterwards.
+
+Likewise, whether a decoder actually shows two independently attributed copies
+of the developer fields in one `.FIT` file has **not** been observed in this
+repo. It is the design premise of this variant, tracked as
+[#64](https://github.com/Macrophage87/CarbBurnDataField/issues/64).
 
 ## Accuracy / caveats
 
@@ -190,7 +334,9 @@ live in `loadSettings()` in `source/CarbBurnView.mc` if you want to tune them.
 
 ```
 manifest.xml                         app manifest (type = datafield)
+manifest.beta.xml                    beta variant manifest (separate application id)
 monkey.jungle                        build config
+beta.jungle                          build config for the beta variant
 source/CarbBurnApp.mc                app entry point
 source/CarbBurnView.mc               the data field + physiology model
 resources/settings/properties.xml    default setting values
@@ -206,6 +352,7 @@ speed_curves.png                     Figure 3 — speed vs power / carb rate / c
 tools/simulate_fields.py             renders the simulated field screenshots
 tools/plot_speed_curves.py           renders the speed-axis white-paper figure
 tools/build_iq.sh                    exports a signed .iq for the Connect IQ Store
+tools/build_beta.sh                  builds the beta variant (.iq + per-device .prg)
 simulated_field_small.png            simulated wide (3-column) field
 simulated_field_large.png            simulated full-screen grid field
 ```

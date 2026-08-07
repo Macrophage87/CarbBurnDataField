@@ -17,9 +17,10 @@ stock GitHub-hosted `ubuntu-latest`:
 
 | Job | Container? | Required? | What it does |
 |---|---|---|---|
-| `manifest-lint` | no | ✅ | Fails if the manifest app id is missing/placeholder/malformed. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. |
+| `manifest-lint` | no | ✅ | Fails if a manifest app id is missing/placeholder/malformed, **if two manifests share an id**, or **if `manifest.xml`'s id is not the pinned registered literal**. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. Invoked with **no arguments**, so it discovers `manifest.xml` + every `manifest.<variant>.xml` — an enumerated arg list is one somebody can quietly shorten. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
-| `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
+| `release-build` | yes | ✅ | Release-compiles every device, **asserts every shipped `.prg` embeds the registered application id and not the beta one**, then exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
+| `beta-build` | yes | ✅ | The parallel-install **beta** variant (`beta.jungle` → `manifest.beta.xml`, separate application id): release-compiles every device, exports its `.iq`, then hexdumps each beta `.prg` to assert it embeds the **beta** application id and not the production one. Uploads `beta-artifacts`. |
 | `run-tests` | — | not wired (measured) | Headless `(:test)` **execution** is not a CI job: with the constructor abort already fixed, `monkeydo` still timed out in this container (run `30129233091`, `rc=124`) — see below. The suite's **compilation** is gated regardless by `compile-unit-test` (13 devices). |
 | `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
 | `advisory-lint` | no | ⚠️ advisory | `continue-on-error`, out of `ci-required.needs`. Flags `System.println` / `TODO` / `FIXME` as annotations. Never blocks a merge. |
@@ -27,7 +28,92 @@ stock GitHub-hosted `ubuntu-latest`:
 The **device matrix equals the manifest `<iq:products>` list** (13 devices:
 `edge530 edge830 edge540 edge840 edge1030 edge1030plus edge1040 edge1050
 edgeexplore2 fenix6pro fenix7 fenix8pro47mm fr955`). If you add or remove a
-device in `manifest.xml`, update `env.DEVICES` in the workflow to match.
+device in `manifest.xml`, update `env.DEVICES` in the workflow to match — **and
+`manifest.beta.xml`**, which must declare the same products.
+
+One direction of that is enforced rather than documented: `monkeyc` exits `102`
+(`Target device id 'X' is not enabled in the application manifest file`) when
+`-d` names a product the manifest omits — measured locally against SDK 9.2.0 —
+so a product dropped from either manifest reds its per-device loop. The other
+direction (a device dropped from `env.DEVICES`, silently narrowing the matrix)
+is still unchecked; that is [#46](https://github.com/Macrophage87/CarbBurnDataField/issues/46).
+
+## The beta variant
+
+`manifest.beta.xml` / `beta.jungle` build the same source under a second
+application id, so that the beta is *intended* to install **alongside**
+production rather than replace it. (That, and the FIT-attribution consequence,
+are design premises nobody has measured — #63 and #64.) CI treats it as a
+first-class build regardless: `beta-build` is in `ci-required.needs`.
+
+Why required rather than advisory: it satisfies the `needs` contract (no
+job-level `if:`, so it runs on every PR and a skip is always a real fault), and
+it is the **only** job that consumes `manifest.beta.xml` or `beta.jungle`. Left
+advisory, those two files could break and still merge green, and a beta that
+does not build cannot serve its purpose.
+
+Cost, both halves: a third pull of the same pinned image and roughly one extra
+container job of wall-clock per PR — **and** the fact that a broken beta, which
+is unregistered and non-shippable, now blocks a production hotfix. That is the
+price of the guarantee, and it is accepted deliberately rather than overlooked.
+
+### The application-id guards
+
+An XML diff proves a manifest file changed; it does not prove `monkeyc` consumed
+it. `monkeyc` embeds the application id in the `.prg` as 16 raw bytes, so both
+build jobs hexdump their artifacts and assert which id came out:
+
+| Job | Asserts |
+|---|---|
+| `beta-build` | for each of `$DEVICES`, `bin/CarbBurn-Beta-<dev>.prg` exists and embeds the **beta** id, and **not** the production id |
+| `release-build` | for each of `$DEVICES`, `bin/CarbBurn-<dev>.prg` exists and embeds the **registered** id, and **not** the beta id — checked **before** the store `.iq` is exported |
+
+Both iterate `env.DEVICES` rather than globbing, so a missing artifact fails too
+(a glob would silently assert over whatever happened to be there), and
+`bin/CarbBurn-*.prg` cannot accidentally sweep in the beta artifacts.
+
+**"Registered" is two checks composed — do not weaken either half.** The
+`release-build` guard reads its expected value *out of `manifest.xml`*, so on
+its own it asserts only that the artifact agrees with the manifest it was built
+from. Measured: substitute a fabricated id into `manifest.xml` and `monkeyc`
+still exits 0 and the guard still passes, printing the fabricated value under
+`registered id:`. What makes the word *registered* true is the other half —
+`manifest-lint` pins `manifest.xml`'s id to the literal
+`EXPECTED_PRODUCTION_ID` in `scripts/check_manifest_appid.py`, so the id cannot
+drift in the first place. Both jobs are in `ci-required.needs`.
+
+That pin is not hypothetical insurance: `CHANGELOG.md` records "Restored the
+registered application id" under 1.3, and `git log -S` places it at `9b3e238`
+(changed) → `3e4ae5c` (restored). The class has occurred once here, under CI
+that could not see it. The cost is that a genuine re-registration must edit two
+files, which is the intent — `manifest.xml`'s own header says the id must never
+change.
+
+The `release-build` half is the one that matters most, and it exists because the
+beta variant created the hole. With two manifests in the tree, a one-line
+repoint of `monkey.jungle` at `manifest.beta.xml` compiles clean on all 13
+devices, passes `manifest-lint`, leaves `beta-build` green, and exports a store
+`.iq` under the **unregistered** beta id — against `manifest.xml`'s own "It must
+never change, or store updates are rejected". Nothing else in this workflow
+notices. The guard is placed before the export so a wrong id prevents the store
+package from being produced at all.
+
+Both steps are `sh` + coreutils on purpose — they do not assume the SDK
+container ships `python3`.
+
+**Known asymmetry:** on the beta side the `.iq` is exported *before* its guard
+runs, the reverse of the release side, and the artifact upload is
+`if: always()` — so a **red** `beta-build` can still publish a `beta-artifacts`
+bundle whose `.iq` carries the wrong application id. Lower stakes than the
+release side (that `.iq` is throwaway-key-signed, never submittable, and the
+`.prg` is the sideload channel), but check the job status before installing
+anything from a run — `README.md`'s **Sideload** section says the same, since
+that is where someone about to install one will be reading. Reordering is
+[#80](https://github.com/Macrophage87/CarbBurnDataField/issues/80); note that the
+reorder alone would not stop publication, because the upload is `if: always()`
+by design. Checking the job status is the part that prevents the harm.
+
+See the README for how to build and sideload the beta.
 
 ## Branch protection — must be set by a repo admin
 
@@ -67,8 +153,8 @@ a new device product id isn't in SDK 9.2.0):
 1. Find a newer `ghcr.io/matco/connectiq-tester` tag that ships the device.
 2. Resolve its digest: `docker pull ghcr.io/matco/connectiq-tester:<tag>` then
    `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/matco/connectiq-tester:<tag>`.
-3. Replace **every** `container.image` value in `ci.yml` (currently two:
-   `compile-unit-test` and `release-build`) with the new `@sha256:...`, and update
+3. Replace **every** `container.image` value in `ci.yml` (currently three:
+   `compile-unit-test`, `release-build` and `beta-build`) with the new `@sha256:...`, and update
    the `# vX.Y.Z = SDK ...` comment. The digest is the pin; the tag lives only in
    the comment. There is deliberately no `env` copy of the digest —
    `container.image` cannot read the `env` context, so an `env` entry would be a
