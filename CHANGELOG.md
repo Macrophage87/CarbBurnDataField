@@ -16,8 +16,13 @@ All notable changes to **Carb Burn** are documented here. Format based on
   and a release `.prg` per device (and, unlike `build_iq.sh`, refuses to mint a
   signing key). CI gains a required `beta-build` job that release-compiles the
   variant for all 13 devices and asserts the built `.prg` carry the beta id;
+  `release-build` gained the mirror of that assertion, so the shipped store
+  artifacts are now checked to carry the *registered* id and not the beta one.
   `scripts/check_manifest_appid.py` now validates every manifest and fails if
-  two share an application id. No behaviour change to the field itself.
+  two share an application id. No behaviour change to the field itself — the
+  beta is **behaviourally identical** to production at every commit, since
+  `beta.jungle` changes only the manifest; it is scaffolding for a future
+  side-by-side trial, not a comparison that can be run today.
 
 - **Speed-axis white-paper figure (Figure 3).** `tools/plot_speed_curves.py`
   renders `speed_curves.png`: speed vs power, speed vs carb rate, and speed vs

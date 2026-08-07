@@ -1,8 +1,21 @@
 <strings>
     <string id="AppName">Carb Burn</string>
-    <!-- Display name of the beta build variant (manifest.beta.xml). Shipped in
-         every build - a string resource costs nothing when unreferenced - so
-         that one resources/ tree serves both manifests. -->
+    <!-- Display name of the beta build variant (manifest.beta.xml). One
+         resources/ tree serves both manifests, so this string ships in the
+         PRODUCTION build too, where nothing references it.
+
+         It costs +32 bytes per production .prg - measured, not estimated: the
+         release build was repeated with this string removed, and every one of
+         the 13 devices came out exactly 32 bytes smaller (edge840
+         14908 -> 14940, fenix7 13084 -> 13116, edge1050 25036 -> 25068, 13/13
+         at +32). Judged worth paying to keep one strings file; if the
+         data-field memory budget ever gets tight, this is 32 bytes to reclaim.
+
+         CONSEQUENCE, and the reason this note matters: the literal
+         "Carb Burn (Beta)" is present in the production .prg as well (offset
+         12985 on edge840). The app-name string is therefore NOT usable as
+         evidence of which manifest a build consumed. Only the embedded 16-byte
+         application id discriminates - which is what the CI guards check. -->
     <string id="AppNameBeta">Carb Burn (Beta)</string>
     <string id="FtpTitle">FTP (watts)</string>
     <string id="Lt1Title">LT1 / aerobic threshold (watts, 0 = not tested)</string>

@@ -173,16 +173,26 @@ Set weight to `0` to disable the glycogen readout.
 `manifest.beta.xml` + `beta.jungle` build the **same source** under a **second
 application id** (`3aa0137493fa4511ba559720835b1ab5`, display name
 **Carb Burn (Beta)**). Connect IQ identifies an installed app by its application
-id, so the beta is a different app: it sits next to the store build instead of
-replacing it, and you can put both on one ride screen and compare them over the
-same activity.
+id, so the beta is a different app: the intent is that it sits next to the store
+build instead of replacing it, and that you can put both on one ride screen and
+compare them over the same activity.
+
+> **This is scaffolding, and today there is nothing to compare.** `beta.jungle`
+> changes the manifest and nothing else — no source file reads the application
+> id or name, and there is no `excludeAnnotations` or source-path override. So
+> at any given commit the beta is **behaviourally identical** to production, and
+> an A/B ride would compare the app to itself. The variant exists so that a
+> future divergence *can* be trialled side by side; the divergence mechanism
+> does not exist yet.
 
 The FIT developer field ids stay **0–3**, byte-identical to production
-(`source/CarbBurnView.mc`). Same schema under a different application id is what
-makes a one-activity A/B diff readable — nothing is renumbered and no
-beta-only field is added.
+(`source/CarbBurnView.mc`) — nothing is renumbered and no beta-only field is
+added. Keeping the schema identical is what a one-activity A/B diff would need.
+Whether the two apps are actually attributed separately in the `.FIT` file is a
+premise, not a measurement; see "Settings" below.
 
-**The beta id is not registered on the Connect IQ Store. Never upload it there.**
+**The beta id was not registered on the Connect IQ Store by this project. Never
+upload it there.**
 
 ### Build
 
