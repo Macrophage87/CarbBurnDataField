@@ -510,6 +510,122 @@ function test_recon_factor_current_shape(logger) {
     return live && degenerate;
 }
 
+// -------- #59: the bound on reconFactor() (differentials) --------
+
+// DIFFERENTIAL for the FLOOR. The #59 trigger at 200 W with the smallest
+// non-zero integer info.calories can report. One sample of model kcal is
+// 0.227625 (measured, pinned by test_recon_cold_start_mechanism), two orders of
+// magnitude below any usable minimum denominator - so the factor must fall back
+// to 1.0 and carb_rate must carry the pure model rate, which #8's warm-up
+// seeding has already made exactly right.
+//
+// The fallback is 1.0 rather than some invented number because the pure power
+// model is the only other self-consistent scale the field already owns.
+//
+// RED before the fix: recon 4.393200 and mRateDisp 487 g/h against a true
+// 110.877800. Also red on a CLAMP-ONLY implementation: 3.000000 and 333 g/h.
+// This is the test that discriminates the floor.
+(:test)
+function test_recon_floor_suppresses_cold_start(logger) {
+    var v = cbvColdStart(200, 1);
+    var truth = v.carbRateAt(200.0);
+    var recon = v.reconFactor();
+    var suppressed = cbvNear(recon, 1.0, 0.000001);
+    // Window stated RELATIVE to the view's own model, so it is both
+    // settings-independent and non-degenerate at settings where carbRateAt(200)
+    // is small - which a fixed absolute window, or cbvRelEq's m<1.0 floor,
+    // would not be.
+    var rateIsModel = cbvNear(v.mRateDisp, truth, 0.0001 * truth);
+    logger.debug("recon=" + recon + " suppressed=" + suppressed
+                 + " rateIsModel=" + rateIsModel + " mRateDisp=" + v.mRateDisp
+                 + " true=" + truth + " FIT=" + v.clampU16(v.mRateDisp)
+                 + " FITtrue=" + v.clampU16(truth)
+                 + " modelKcal=" + v.mModelKcal + " garminKcal=" + v.mGarminKcal);
+    return suppressed && rateIsModel;
+}
+
+// DIFFERENTIAL for the CLAMP, and the reason the clamp is the load-bearing half
+// rather than the floor. 15 minutes of measured 0 W while Garmin counts to
+// 60 kcal, then 600 s at 200 W.
+//
+// The numerator is FROZEN at 60 through the powered phase. That makes no
+// assumption about how fast a device counts calories while pedalling (#67 is
+// open precisely because nobody has measured that), and it is the conservative
+// choice: any further accrual only raises the factor.
+//
+// 3.0 is a literal here, not a read of the production constant. A test that
+// reads RECON_MAX cannot fail when RECON_MAX is mutated, which is the
+// assertion-that-cannot-fail trap; the expected value has to be restated
+// independently or it pins nothing.
+//
+// `binding` pins the floor and the ceiling as a PAIR: at a 10 kcal floor the
+// raw factor at release is 60/10.0155 = 5.990727, above the ceiling, so the
+// ceiling engages and the maximum is exactly 3.0. A materially higher floor
+// would release below the ceiling and red this - deliberate, that pair is the
+// design. Without `binding` the whole test passes on `return 1.0;`.
+//
+// RED before the fix: peak factor 263.591980, peak carb_rate 29226 against a
+// ceiling of 333. Also red on a FLOOR-ONLY implementation: 5.990727 and 664
+// with the numerator frozen (6.989182 and 775 if the device keeps counting
+// through the powered phase - both measured).
+(:test)
+function test_recon_never_exceeds_band_after_rollout(logger) {
+    var CEIL = 3.0;
+    var v = cbvNewView();
+    var t = 1000;
+    v.compute(mkInfo(0, t, null));                      // prime, dt = 0
+    for (var i = 1; i <= 900; i += 1) {                 // 15 min of measured 0 W
+        t += 1000;
+        v.compute(mkInfo(0, t, (60 * i) / 900));        // truncated integer kcal
+    }
+    // Precondition, not decoration: if the roll-out did not actually put
+    // 60 kcal in the numerator and nothing in the denominator, the rest of this
+    // test is measuring something else.
+    var rolledOut = cbvNear(v.mGarminKcal, 60.0, 0.000001) && (v.mModelKcal == 0.0);
+    var maxRecon = 0.0;
+    var peak = 0;
+    for (var s = 1; s <= 600; s += 1) {                 // 10 min at 200 W
+        t += 1000;
+        v.compute(mkInfo(200, t, 60));
+        var r = v.reconFactor();
+        if (r > maxRecon) { maxRecon = r; }
+        var f = v.clampU16(v.mRateDisp);
+        if (f > peak) { peak = f; }
+    }
+    var truth     = v.carbRateAt(200.0);
+    var bounded   = (maxRecon <= CEIL + 0.000001);
+    var rateBound = (peak <= v.clampU16(CEIL * truth) + 1);
+    var binding   = (maxRecon >= CEIL - 0.000001);
+    logger.debug("rolledOut=" + rolledOut + " bounded=" + bounded
+                 + " rateBound=" + rateBound + " binding=" + binding
+                 + " maxRecon=" + maxRecon + " peakFIT=" + peak
+                 + " ceilFIT=" + v.clampU16(CEIL * truth) + " true=" + truth);
+    return rolledOut && bounded && rateBound && binding;
+}
+
+// DIFFERENTIAL for the LOWER half of the band. The clamp is symmetric because
+// info.calories is an integer: the same small-denominator window can also
+// produce a factor BELOW 1.0 when it truncates, which is why #59's direction of
+// error is NOT unambiguously upward (unlike #32's whole-ride bias).
+//
+// Driven by direct assignment, deliberately: no calorie series constructed
+// in-simulator has reached this bound - the minimum factor observed across the
+// design comment's ride sweeps was 0.959536 - so it is a defensive bound and is
+// stated as one. A binding lower clamp INFLATES the reported grams, so it is
+// set well below anything measured rather than close to 1.0.
+//
+// RED before the fix: 0.100000.
+(:test)
+function test_recon_lower_bound_clamps(logger) {
+    var v = cbvNewView();
+    v.mModelKcal  = 100.0;
+    v.mGarminKcal = 10.0;
+    var r = v.reconFactor();
+    var clamped = cbvNear(r, 0.5, 0.000001);
+    logger.debug("recon=" + r + " clamped=" + clamped);
+    return clamped;
+}
+
 // -------- #15: fat-max BLUE band is reconFactor()-invariant --------
 // The band boundary must not move with reconFactor(), asserted across 3 recon
 // values below and above the 0.95*peak threshold - plus a check that recon
