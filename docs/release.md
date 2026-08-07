@@ -21,11 +21,13 @@ or is *checked against* it:
 | `dist/CarbBurn-<version>.iq` | filename is read from `VERSION` | `tools/build_iq.sh` |
 | `v<version>` git tag | must be strictly *older* than `VERSION` at build time | `scripts/check_version.py --release` |
 
-`manifest.xml` deliberately carries no version. A Connect IQ **datafield**
-manifest has no version attribute (`manifest.xml:5`'s `version="3"` is the
-*manifest schema* version, not the app version), so the store version is a field
-the developer supplies at upload — which is exactly why it needs a checked-in
-source of truth to be derived from.
+`manifest.xml` carries no app version. Structurally: the only `version`
+attribute in the file is on `<iq:manifest>` (`manifest.xml:5`, `version="3"` —
+the manifest format, shared by every Connect IQ app type), and
+`<iq:application>` (`manifest.xml:6-11`) has `entry`, `id`, `launcherIcon`,
+`minApiLevel`, `name` and `type` and nothing version-like. So the store version
+is a field the developer supplies at upload — which is exactly why it needs a
+checked-in source of truth to be derived from.
 
 ### Why a `VERSION` file and not "keep scraping `CHANGELOG.md`"
 
@@ -139,8 +141,8 @@ contract `ci-required` requires (`docs/ci.md`, "Contract").
 - **`README.md:165-168`** still says `tools/build_iq.sh` runs with no arguments
   and generates a key if you have none. Both halves are now false: the key is
   required (#58) and the version comes from `VERSION` (#60). `README.md` is
-  being edited by #37 and #66 concurrently, so the correction is filed rather
-  than made here. Replacement text for step 7:
+  being edited by #37 and #66 concurrently, so the correction is filed as #77
+  rather than made here. Replacement text for step 7:
 
   > 7. **Store release:** bump `VERSION`, `CHANGELOG.md` and
   >    `store/changelog.txt` together, then run
