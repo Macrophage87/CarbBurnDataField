@@ -1,4 +1,4 @@
-Carb Burn — know exactly how you're fueling, in real time.
+Carb Burn — turn your watts into a live estimate of your carbohydrate burn: grams spent, and grams per hour right now.
 
 Carb Burn is a cycling data field that estimates how many grams of carbohydrate and fat you're burning every second — straight from your power meter. Stop guessing at your fuel mix: see it live, and pace and eat to match.
 
@@ -20,7 +20,7 @@ GLYCOGEN GAUGE
 Enter your body weight and it estimates your glycogen stores, how much you've spent, and how much remains — a live fuel tank for long rides.
 
 RECORDS TO YOUR FIT FILE
-Cumulative carbohydrate and fat (grams) are written into your activity's FIT file — as a graphable time series and as session totals — so you can review your fueling in Garmin Connect and other analysis tools after every ride.
+Your rolling carbohydrate and fat burn rates are written into the activity's FIT file as a time series, and the ride's totals in grams as session fields — there for post-ride review in tools that read FIT developer fields. Field names and units: https://github.com/Macrophage87/CarbBurnDataField#fit-recording
 
 SETTINGS
 - FTP (watts) — required
