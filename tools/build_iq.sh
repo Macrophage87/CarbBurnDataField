@@ -6,10 +6,13 @@
 #
 # VERSION - the top-level VERSION file is the single source of truth for the
 # release version; CHANGELOG.md and store/changelog.txt must agree with it, and
-# it must be strictly newer than the newest v* git tag. Both are asserted here
-# by scripts/check_version.py --release, and a failure STOPS the export. There
-# is no bypass flag: the only way through is to bump the version, which is
-# exactly the release ritual (see docs/release.md).
+# it must be strictly newer than every v* release tag that EXISTS - which means
+# the remote's tags, read with ls-remote, not just whatever this checkout has
+# fetched. Both are asserted by scripts/check_version.py --release, and a
+# failure STOPS the export. There is no bypass flag: the only way through is to
+# bump the version, which is exactly the release ritual (see docs/release.md).
+# If a remote is configured but unreachable, this refuses to build rather than
+# falling back to a possibly-stale local tag set.
 #
 # KEY - taken from -y/--key or $CIQ_DEVELOPER_KEY. This script will NOT generate
 # one: a signing key you did not choose is a signing key you cannot reproduce,

@@ -17,7 +17,9 @@ internal-mir/
 *.der
 developer_key*
 
-# Python bytecode (scripts/ and tools/ are run locally)
+# Python bytecode. Prophylactic: nothing in scripts/ imports a local module
+# today, and running a top-level script alone writes no __pycache__ - only an
+# import (or py_compile) does. Kept so that stops being a trap later.
 __pycache__/
 *.pyc
 

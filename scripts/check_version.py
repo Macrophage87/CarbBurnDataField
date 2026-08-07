@@ -20,8 +20,24 @@ Two modes:
   (default)   consistency only. Safe to run on every push/PR - it is green on a
               tree that is merely between releases.
   --release   consistency AND the release gate: VERSION must be strictly greater
-              than the newest ``v*`` git tag. Red between releases, by design.
-              tools/build_iq.sh runs this and refuses to export if it fails.
+              than the newest ``v*`` tag that EXISTS. Red between releases, by
+              design. tools/build_iq.sh runs this and refuses to export if it
+              fails.
+
+Which tags count, and why it is not simply ``git tag --list``:
+
+    ``git tag --list`` answers "what does this checkout happen to have", which
+    is a different question from "what has been released". A ``--no-tags``
+    clone, a shallow clone, or a checkout that has not fetched since the last
+    release all answer the first question confidently and the second one
+    wrongly - and the wrong answer is a confident PASS that exports the
+    already-published version. So when the repo has a remote, ``--release``
+    reads that remote's tags with ``git ls-remote --tags`` and compares against
+    the UNION of remote and local tags (a local tag not yet pushed is still a
+    version that exists). If the remote exists but cannot be reached, the gate
+    FAILS (exit 3); it never falls back to the local view. Only a repository
+    with genuinely no remote is compared against local tags alone, and it says
+    so on every line it prints.
 
 Exit codes (distinct so a caller - and a differential - can tell them apart):
 
@@ -29,7 +45,8 @@ Exit codes (distinct so a caller - and a differential - can tell them apart):
     1   a consistency check failed (the three records disagree, or one is
         missing/malformed)
     2   the release gate failed (VERSION is not greater than the newest v* tag)
-    3   usage or environment error (bad arguments; git unavailable in --release)
+    3   usage or environment error (bad arguments; git unavailable, or the
+        remote's tags unreadable, in --release)
 
 Precedence when several fail: 3 beats 1 beats 2.
 
@@ -62,6 +79,9 @@ STORE_FIRST_LINE_RE = re.compile(r"\AVersion\s+(\d[0-9.]*)\b")
 
 # Release tags. Anything else under refs/tags is reported and ignored.
 TAG_RE = re.compile(r"\Av(\d+\.\d+(?:\.\d+)?)\Z")
+
+# ls-remote talks to the network. A hung remote must fail the gate, not hang it.
+GIT_TIMEOUT_S = 60
 
 EXIT_OK = 0
 EXIT_INCONSISTENT = 1
@@ -200,32 +220,110 @@ def load_store_changelog(root, failures):
     return m.group(1)
 
 
-def git_tags(root, env_failures):
-    """Every tag in ROOT. Fails closed: no git, no gate."""
+def _git(root, *args, timeout=GIT_TIMEOUT_S):
+    """Run a git command in ROOT. Raises on failure; the callers decide."""
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True, text=True, check=True, timeout=timeout,
+    ).stdout
+
+
+def local_tags(root, env_failures):
+    """Tags present in THIS checkout. None on failure (fails closed)."""
     try:
-        out = subprocess.run(
-            ["git", "-C", str(root), "tag", "--list"],
-            capture_output=True, text=True, check=True,
-        ).stdout
-    except (OSError, subprocess.CalledProcessError) as exc:
+        out = _git(root, "tag", "--list")
+    except (OSError, subprocess.SubprocessError) as exc:
         env_failures.append(
-            f"could not list git tags in {root}: {exc}. The release gate compares "
-            "against the newest v* tag and cannot be skipped; run the release from "
-            "a git checkout with tags fetched."
+            f"could not list git tags in {root}: {exc}. Run the release from a "
+            "git checkout."
         )
         return None
     return [t.strip() for t in out.split("\n") if t.strip()]
 
 
-def check_release_gate(root, version, gate_failures, env_failures):
-    """VERSION must be strictly greater than the newest v* tag."""
-    tags = git_tags(root, env_failures)
-    if tags is None:
+def pick_remote(root, env_failures):
+    """The remote to consult: 'origin' if it exists, else the first one.
+
+    Returns the remote name, or "" when the repo genuinely has no remote.
+    None signals a hard failure.
+    """
+    try:
+        out = _git(root, "remote")
+    except (OSError, subprocess.SubprocessError) as exc:
+        env_failures.append(f"could not list git remotes in {root}: {exc}")
         return None
+    remotes = [r.strip() for r in out.split("\n") if r.strip()]
+    if not remotes:
+        return ""
+    return "origin" if "origin" in remotes else remotes[0]
+
+
+def remote_tags(root, remote, env_failures):
+    """Tags on REMOTE, via ls-remote. None on failure - and failure is fatal.
+
+    This is the whole point of B1: `git tag --list` answers "what does this
+    checkout happen to have", which is not the same question as "what has been
+    released". A shallow clone, a `--no-tags` clone, or a checkout that simply
+    has not fetched since the last release all answer the first question
+    confidently and the second one wrongly. So when a remote exists we ask it,
+    and if we cannot reach it we refuse to release rather than quietly falling
+    back to the local view.
+    """
+    try:
+        out = _git(root, "ls-remote", "--tags", remote)
+    except (OSError, subprocess.SubprocessError) as exc:
+        env_failures.append(
+            f"could not read tags from remote '{remote}': {exc}\n"
+            "    The release gate must compare against the tags that actually "
+            "exist, not\n"
+            "    whatever this checkout happens to have fetched. Refusing to fall "
+            "back to\n"
+            "    local tags: a stale local tag set is exactly how a duplicate "
+            "version ships.\n"
+            "    Restore network/credentials for that remote and re-run."
+        )
+        return None
+    tags = []
+    for line in out.split("\n"):
+        _, _, ref = line.partition("refs/tags/")
+        ref = ref.strip()
+        if not ref:
+            continue
+        tags.append(ref[:-3] if ref.endswith("^{}") else ref)   # peel annotated
+    return tags
+
+
+def collect_tags(root, env_failures):
+    """(tags, provenance) for the gate. (None, None) => fail closed.
+
+    ``provenance`` is printed on the success line, so a passing run always
+    states what it actually compared against.
+    """
+    local = local_tags(root, env_failures)
+    if local is None:
+        return None, None
+    remote = pick_remote(root, env_failures)
+    if remote is None:
+        return None, None
+    if not remote:
+        return set(local), "this checkout only - NO GIT REMOTE IS CONFIGURED"
+    rtags = remote_tags(root, remote, env_failures)
+    if rtags is None:
+        return None, None
+    # Union, not the remote alone: a tag created locally and not yet pushed is
+    # still a version that exists, and must still block re-using it.
+    return set(local) | set(rtags), f"this checkout + remote '{remote}' (ls-remote)"
+
+
+def check_release_gate(root, version, gate_failures, env_failures):
+    """VERSION must be strictly greater than every v* tag that exists."""
+    tags, provenance = collect_tags(root, env_failures)
+    if tags is None:
+        return None, None
 
     releases = []
     ignored = []
-    for tag in tags:
+    for tag in sorted(tags):
         m = TAG_RE.match(tag)
         if m:
             releases.append((sort_key(m.group(1)), m.group(1), tag))
@@ -234,9 +332,10 @@ def check_release_gate(root, version, gate_failures, env_failures):
     if ignored:
         note(f"ignoring {len(ignored)} non-release tag(s): {', '.join(sorted(ignored))}")
 
+    print(f"release tags compared against: {provenance}")
     if not releases:
-        note("no v* release tags in this repo - treating this as the first release")
-        return []
+        note("no v* release tags found - treating this as the first release")
+        return [], provenance
 
     newest = max(releases)
     print(f"newest release tag: {newest[2]}  ({len(releases)} v* tag(s) total)")
@@ -247,11 +346,14 @@ def check_release_gate(root, version, gate_failures, env_failures):
             f"release tag {newest[2]}. A package built now would carry a version "
             "the store has already seen. Bump all three in one commit:\n"
             f"    VERSION              -> e.g. {nxt}\n"
-            f"    CHANGELOG.md         -> add '## [{nxt}] - <date>' directly under "
-            "[Unreleased]\n"
+            f"    CHANGELOG.md         -> add a '## [{nxt}]' section, dated, "
+            "directly under [Unreleased]\n"
             f"    store/changelog.txt  -> first line 'Version {nxt} - What's new'"
+            # Deliberately no dash character in the heading example: the repo's
+            # headings use an em dash, but this string is printed to a console
+            # and an em dash renders as '?' on a cp1252 Windows terminal.
         )
-    return [r[1] for r in releases]
+    return [r[1] for r in releases], provenance
 
 
 def advise_tag_drift(changelog_versions, release_versions, current):
@@ -322,8 +424,10 @@ def main():
             )
 
     release_versions = None
+    provenance = None
     if args.release and version is not None:
-        release_versions = check_release_gate(root, version, gate_failures, env_failures)
+        release_versions, provenance = check_release_gate(
+            root, version, gate_failures, env_failures)
 
     if version is not None:
         print(f"VERSION: {version}")
@@ -345,11 +449,19 @@ def main():
         return EXIT_GATE
 
     if args.release:
+        # State what was compared against, every time. The failure this file
+        # exists to prevent once got past an unqualified "newer than every v*
+        # tag" that was, in fact, false - it had only seen a stale local set.
         print(f"OK: {version} is consistent across VERSION, CHANGELOG.md and "
-              "store/changelog.txt, and is newer than every v* tag")
+              f"store/changelog.txt, and is newer than every v* tag in "
+              f"{provenance}")
+        if provenance and "NO GIT REMOTE" in provenance:
+            note("this repository has no remote, so no tag set could be "
+                 "confirmed against a published one")
     else:
         print(f"OK: {version} is consistent across VERSION, CHANGELOG.md and "
               "store/changelog.txt")
+        note("consistency only - the release gate (--release) was NOT run")
     return EXIT_OK
 
 
