@@ -139,6 +139,13 @@ jobs:
   #    For type=datafield, monkeyc exits non-zero when the static image exceeds
   #    the target's data-field memory limit - so a non-zero exit IS the budget
   #    assertion (we do not merely log sizes).
+  #
+  #    It also asserts the shipped artifacts carry the REGISTERED application id.
+  #    That guard exists because the repo now has more than one manifest: a
+  #    one-line repoint of monkey.jungle at manifest.beta.xml compiles clean,
+  #    lints clean and exports a store .iq under the UNREGISTERED beta id, which
+  #    manifest.xml:2-4 says must never happen. Nothing else in this workflow
+  #    would notice.
   release-build:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
@@ -183,6 +190,59 @@ jobs:
             exit 1
           fi
           echo "all $(echo $DEVICES | wc -w) devices release-compiled OK"
+
+      - name: Assert the shipped .prg carry the REGISTERED application id
+        # Same argument as the beta job's mirror of this step, applied to the
+        # artifact that actually ships: an XML diff proves the file on disk
+        # changed, it does not prove monkeyc consumed it. monkeyc embeds the
+        # application id in the .prg as 16 RAW bytes, so hexdump each artifact
+        # and require the PRODUCTION id present and the BETA id absent.
+        #
+        # This runs BEFORE the .iq export on purpose: a wrong id must stop the
+        # store package from being produced at all, not be caught after it
+        # exists. The .iq is exported from the same jungle and therefore the
+        # same project.manifest, so a repoint that would poison the .iq poisons
+        # these .prg first - measured: in the swapped-jungle mutant, the 13 .prg
+        # and the .iq internal manifest carry the beta id together.
+        #
+        # sh + coreutils, not python3: nothing has established that this
+        # container ships python3. Caveat: the search is over a flattened nibble
+        # stream, so it is not byte-aligned; a false hit needs a specific 16-byte
+        # sequence off-alignment, which is not a practical concern at these sizes.
+        run: |
+          set -eu
+          idof() { sed -n 's/.*id="\([0-9a-fA-F]\{32\}\)".*/\1/p' "$1" | head -1 | tr 'A-Z' 'a-z'; }
+          PROD=$(idof manifest.xml)
+          BETA=$(idof manifest.beta.xml)
+          [ -n "$PROD" ] || { echo "::error::no 32-hex app id in manifest.xml"; exit 1; }
+          [ -n "$BETA" ] || { echo "::error::no 32-hex app id in manifest.beta.xml"; exit 1; }
+          [ "$PROD" != "$BETA" ] || { echo "::error::manifest ids identical - nothing to assert"; exit 1; }
+          echo "registered id: $PROD"
+          echo "beta id:       $BETA"
+          n=0; bad=0
+          # Iterate $DEVICES rather than globbing: this also asserts that every
+          # expected artifact EXISTS, and a glob like bin/CarbBurn-*.prg would
+          # additionally sweep in bin/CarbBurn-Beta-*.prg if the two jobs were
+          # ever merged into one workspace.
+          for dev in $DEVICES; do
+            f="bin/${APP_NAME}-$dev.prg"
+            n=$((n+1))
+            if [ ! -f "$f" ]; then
+              echo "::error::$f missing - the release loop did not produce it"
+              bad=$((bad+1)); continue
+            fi
+            hex=$(od -An -v -tx1 "$f" | tr -d ' \n')
+            ok=1
+            case "$hex" in *"$PROD"*) : ;; *) echo "::error::$f does NOT embed the registered app id"; ok=0 ;; esac
+            case "$hex" in *"$BETA"*) echo "::error::$f embeds the BETA app id - monkey.jungle must point at manifest.xml"; ok=0 ;; *) : ;; esac
+            if [ "$ok" -eq 1 ]; then echo "OK   $f"; else bad=$((bad+1)); fi
+          done
+          [ "$n" -gt 0 ] || { echo "::error::DEVICES is empty - nothing was asserted"; exit 1; }
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::$bad/$n release .prg carried the wrong application id - refusing to export the store package"
+            exit 1
+          fi
+          echo "all $n release .prg embed $PROD and not $BETA"
 
       - name: Export the store package (.iq)
         run: |
@@ -306,15 +366,22 @@ jobs:
           echo "production id: $PROD"
           echo "beta id:       $BETA"
           n=0; bad=0
-          for f in bin/*-Beta-*.prg; do
-            [ -f "$f" ] || { echo "::error::no beta .prg found to inspect"; exit 1; }
+          # Iterate $DEVICES, not a glob - see the mirror of this step in
+          # release-build for why (it also asserts each artifact exists).
+          for dev in $DEVICES; do
+            f="bin/${APP_NAME}-Beta-$dev.prg"
             n=$((n+1))
+            if [ ! -f "$f" ]; then
+              echo "::error::$f missing - the beta release loop did not produce it"
+              bad=$((bad+1)); continue
+            fi
             hex=$(od -An -v -tx1 "$f" | tr -d ' \n')
             ok=1
             case "$hex" in *"$BETA"*) : ;; *) echo "::error::$f does NOT embed the beta app id"; ok=0 ;; esac
             case "$hex" in *"$PROD"*) echo "::error::$f embeds the PRODUCTION app id"; ok=0 ;; *) : ;; esac
             if [ "$ok" -eq 1 ]; then echo "OK   $f"; else bad=$((bad+1)); fi
           done
+          [ "$n" -gt 0 ] || { echo "::error::DEVICES is empty - nothing was asserted"; exit 1; }
           if [ "$bad" -ne 0 ]; then
             echo "::error::$bad/$n beta .prg carried the wrong application id"
             exit 1

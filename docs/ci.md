@@ -19,7 +19,7 @@ stock GitHub-hosted `ubuntu-latest`:
 |---|---|---|---|
 | `manifest-lint` | no | ✅ | Fails if a manifest app id is missing/placeholder/malformed, **or if two manifests share an id**. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. Invoked with **no arguments**, so it discovers `manifest.xml` + every `manifest.<variant>.xml` — an enumerated arg list is one somebody can quietly shorten. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
-| `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
+| `release-build` | yes | ✅ | Release-compiles every device, **asserts every shipped `.prg` embeds the registered application id and not the beta one**, then exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
 | `beta-build` | yes | ✅ | The parallel-install **beta** variant (`beta.jungle` → `manifest.beta.xml`, separate application id): release-compiles every device, exports its `.iq`, then hexdumps each beta `.prg` to assert it embeds the **beta** application id and not the production one. Uploads `beta-artifacts`. |
 | `run-tests` | — | not wired (measured) | Headless `(:test)` **execution** is not a CI job: with the constructor abort already fixed, `monkeydo` still timed out in this container (run `30129233091`, `rc=124`) — see below. The suite's **compilation** is gated regardless by `compile-unit-test` (13 devices). |
 | `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
@@ -41,8 +41,10 @@ is still unchecked; that is [#46](https://github.com/Macrophage87/CarbBurnDataFi
 ## The beta variant
 
 `manifest.beta.xml` / `beta.jungle` build the same source under a second
-application id so the beta can be installed **alongside** production. CI treats
-it as a first-class build: `beta-build` is in `ci-required.needs`.
+application id, so that the beta is *intended* to install **alongside**
+production rather than replace it. (That, and the FIT-attribution consequence,
+are design premises nobody has measured — #63 and #64.) CI treats it as a
+first-class build regardless: `beta-build` is in `ci-required.needs`.
 
 Why required rather than advisory: it satisfies the `needs` contract (no
 job-level `if:`, so it runs on every PR and a skip is always a real fault), and
@@ -50,13 +52,39 @@ it is the **only** job that consumes `manifest.beta.xml` or `beta.jungle`. Left
 advisory, those two files could break and still merge green, and a beta that
 does not build cannot serve its purpose.
 
-`beta-build` also asserts what an XML diff cannot: `monkeyc` embeds the
-application id in the `.prg` as 16 raw bytes, so the job hexdumps every beta
-`.prg` and requires the beta id **present** and the production id **absent**.
-That step is `sh` + coreutils on purpose — it does not assume the SDK container
-ships `python3`.
+Cost, both halves: a third pull of the same pinned image and roughly one extra
+container job of wall-clock per PR — **and** the fact that a broken beta, which
+is unregistered and non-shippable, now blocks a production hotfix. That is the
+price of the guarantee, and it is accepted deliberately rather than overlooked.
 
-See the README for how to build and sideload it.
+### The application-id guards
+
+An XML diff proves a manifest file changed; it does not prove `monkeyc` consumed
+it. `monkeyc` embeds the application id in the `.prg` as 16 raw bytes, so both
+build jobs hexdump their artifacts and assert which id came out:
+
+| Job | Asserts |
+|---|---|
+| `beta-build` | for each of `$DEVICES`, `bin/CarbBurn-Beta-<dev>.prg` exists and embeds the **beta** id, and **not** the production id |
+| `release-build` | for each of `$DEVICES`, `bin/CarbBurn-<dev>.prg` exists and embeds the **registered** id, and **not** the beta id — checked **before** the store `.iq` is exported |
+
+Both iterate `env.DEVICES` rather than globbing, so a missing artifact fails too
+(a glob would silently assert over whatever happened to be there), and
+`bin/CarbBurn-*.prg` cannot accidentally sweep in the beta artifacts.
+
+The `release-build` half is the one that matters most, and it exists because the
+beta variant created the hole. With two manifests in the tree, a one-line
+repoint of `monkey.jungle` at `manifest.beta.xml` compiles clean on all 13
+devices, passes `manifest-lint`, leaves `beta-build` green, and exports a store
+`.iq` under the **unregistered** beta id — against `manifest.xml`'s own "It must
+never change, or store updates are rejected". Nothing else in this workflow
+notices. The guard is placed before the export so a wrong id prevents the store
+package from being produced at all.
+
+Both steps are `sh` + coreutils on purpose — they do not assume the SDK
+container ships `python3`.
+
+See the README for how to build and sideload the beta.
 
 ## Branch protection — must be set by a repo admin
 
