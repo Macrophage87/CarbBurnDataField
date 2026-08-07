@@ -1,24 +1,46 @@
 #!/usr/bin/env python3
-"""manifest-lint: validate the Connect IQ manifest application id.
+"""manifest-lint: validate the Connect IQ manifest application ids.
 
 A bad application id still *compiles* and still *passes tests* - the SDK does
 not care - but the Connect IQ Store rejects the upload (or, worse, silently
 collides with another app / breaks FIT developer-data attribution). This check
 catches that store-rejection class before it reaches a human reviewer.
 
-It fails (non-zero exit) if the manifest app id is missing, malformed, or an
+It fails (non-zero exit) if a manifest app id is missing, malformed, or an
 obvious placeholder. A registered id is a 32-character hex GUID with no dashes
 (the format the SDK's "Generate a UUID" command produces).
 
-Usage:  scripts/check_manifest_appid.py [manifest.xml]
+The repo ships more than one manifest: manifest.xml (production, registered on
+the store) and manifest.beta.xml (the parallel-install beta variant). Those two
+ids MUST differ. Two installed apps sharing an id are the same app to Connect
+IQ - the beta would replace the production build instead of sitting beside it,
+and their FIT developer data would be attributed to one app rather than two,
+which is the entire reason the beta variant exists. So this check also asserts
+that every validated manifest carries a DISTINCT id.
+
+Usage:
+    scripts/check_manifest_appid.py                # discover every manifest
+    scripts/check_manifest_appid.py manifest.xml   # validate exactly these
+
+With NO arguments the manifest set is DISCOVERED from the repo root:
+manifest.xml plus every manifest.<variant>.xml sibling. That is how CI invokes
+it, deliberately - an enumerated argument list is a list somebody can quietly
+shorten, and a dropped entry would take the distinctness assertion with it.
+Adding a new manifest.<variant>.xml puts it under this check automatically.
 """
 
 import re
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 CIQ_NS = "http://www.garmin.com/xml/connectiq"
 APP_TYPES = {"datafield", "watchapp", "widget", "watchface", "audio-content-provider-app"}
+
+# The production manifest. Discovery fails if it is missing, so nobody can
+# weaken this check by deleting the file it is mainly about.
+PRIMARY_MANIFEST = "manifest.xml"
+VARIANT_GLOB = "manifest.*.xml"
 
 # Ids that compile fine but must never ship: the all-zero / all-f fillers and a
 # couple of well-known template placeholders.
@@ -35,9 +57,17 @@ def fail(msg):
     sys.exit(1)
 
 
-def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "manifest.xml"
+def discover(root):
+    """manifest.xml plus every manifest.<variant>.xml sibling, in stable order."""
+    primary = root / PRIMARY_MANIFEST
+    if not primary.is_file():
+        fail(f"{primary}: production manifest not found")
+    variants = sorted(p for p in root.glob(VARIANT_GLOB) if p.is_file())
+    return [primary] + variants
 
+
+def check_one(path):
+    """Validate one manifest. Returns its application id; exits non-zero on fault."""
     try:
         tree = ET.parse(path)
     except (OSError, ET.ParseError) as exc:
@@ -82,8 +112,36 @@ def main():
     if not products:
         fail(f"{path}: no <iq:product> devices declared")
 
-    print(f"OK: app id {app_id} (type={app_type}, {len(products)} devices)")
+    print(f"OK: {path}: app id {app_id} (type={app_type}, {len(products)} devices)")
     print("     devices: " + ", ".join(products))
+    return app_id
+
+
+def check_distinct(ids_by_path):
+    """Every manifest must carry its own application id."""
+    seen = {}
+    for path, app_id in ids_by_path:
+        key = app_id.lower()
+        if key in seen:
+            fail(
+                f"{path} and {seen[key]} share application id {app_id} - "
+                "manifests must carry DISTINCT ids, or the variants are the same "
+                "app to Connect IQ (one replaces the other on install, and their "
+                "FIT developer data is attributed to a single app)"
+            )
+        seen[key] = path
+    if len(seen) > 1:
+        print(f"OK: {len(seen)} manifests, {len(seen)} distinct application ids")
+
+
+def main():
+    if len(sys.argv) > 1:
+        paths = [Path(a) for a in sys.argv[1:]]
+    else:
+        paths = discover(Path(__file__).resolve().parent.parent)
+
+    ids_by_path = [(path, check_one(path)) for path in paths]
+    check_distinct(ids_by_path)
     sys.exit(0)
 
 
