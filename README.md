@@ -6,8 +6,9 @@ using your **FTP** and (optionally) **LT1 / aerobic threshold**.
 The layout adapts to the field's shape:
 
 - **Wide, short field** — the three core readouts side by side: **CARBS g** (total),
-  **CARB g/h** and **CARB %**. The rate and the % are both *rolling* (smoothed on the
-  same interval), so they rise and fall together.
+  **CARB g/h** and **CARB %**. The rate is *rolling* (smoothed), and the % is derived
+  from the rolling carb and fat rates, so it always describes the same numbers the
+  field is showing and cannot contradict them.
 - **In-between field** — a short vertical stack of the same values, plus **GLYCG %**
   (glycogen used) when body weight is set.
 - **Full screen** — a grid showing, for **carb g/h**, **fat g/h** and **carb %**, the
@@ -40,12 +41,21 @@ pacing cue. The color is derived from the *same rolling values the field display
 (the rolling carb % and rolling fat g/h), so it always matches the numbers on
 screen — there's no separate smoothing to lag behind:
 
+- **grey, with `--` for the %** — the rolling total is too small for a substrate
+  *ratio* to mean anything (below ~5 carb-equivalent g/h, restored above ~8). This
+  is what you see before the first pedal stroke and after coasting long enough for
+  the rates to fall away: rather than print a percentage of almost nothing, the
+  field says it doesn't know. The fat-max band below is never suppressed by this.
 - **grey** — below the fat-max band
 - **blue** — the fat-max band: rolling fat oxidation within 5% of its modeled peak
   g/h (you're burning fat at close to your maximum rate)
 - **green** — above the fat-max band, up to the 50%-carb crossover
 - **orange** — 50%-carb crossover up to FTP (50–85% rolling carb energy)
 - **red** — at or above FTP (≥85% rolling carb energy; carbohydrate almost entirely dominant)
+
+Because the % is a ratio of the two rolling rates, coasting scales both together
+and the % holds the mix of the effort you were riding, rather than sliding on its
+own. The colour changes when the flux itself becomes negligible.
 
 On light backgrounds the darker blue/green variants are used so the colored numbers
 stay readable. All boundaries derive from your own thresholds, so they scale per
