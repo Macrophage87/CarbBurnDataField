@@ -44,12 +44,19 @@ env:
 jobs:
   # 1) manifest-lint - runner-free. Catches the store-rejection class the SDK
   #    jobs cannot: a bad/placeholder app id still compiles and still tests.
+  #    Also asserts manifest.xml and manifest.beta.xml carry DISTINCT ids - two
+  #    apps sharing an id are one app to Connect IQ, so an accidental collision
+  #    would make the beta replace production instead of installing beside it.
   manifest-lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      - name: Validate manifest application id
-        run: python3 scripts/check_manifest_appid.py manifest.xml
+      - name: Validate manifest application ids
+        # Invoked with NO arguments on purpose: the script then DISCOVERS
+        # manifest.xml + every manifest.<variant>.xml. An enumerated list here
+        # is a list somebody can quietly shorten, and dropping the beta from it
+        # would silently drop the id-distinctness assertion with it.
+        run: python3 scripts/check_manifest_appid.py
 
   # 2) compile-unit-test - container. Compile a --unit-test build for EVERY
   #    manifest device in ONE job so the image pulls once (not per-device).
@@ -203,7 +210,129 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  # 5) ci-required - the SINGLE stable status to require in branch protection.
+  # 5) beta-build - container. The parallel-install BETA variant (beta.jungle ->
+  #    manifest.beta.xml, a separate application id) release-compiled for every
+  #    device in the same matrix, plus its packaged .iq.
+  #
+  #    Why a separate job rather than extra steps in release-build: a beta
+  #    failure and a production failure are different faults and should be
+  #    different red squares. The cost is a third pull of the same pinned image.
+  #
+  #    What this job gates that nothing else does: manifest.beta.xml and
+  #    beta.jungle are consumed by NO other job, so without this they could rot
+  #    unnoticed. Specifically, monkeyc exits 102 ("Target device id 'X' is not
+  #    enabled in the application manifest file") when $DEVICES names a product
+  #    the beta manifest omits - measured locally with SDK 9.2.0 - so this loop
+  #    is a real assertion that the beta declares the whole matrix, not just
+  #    that it compiles.
+  #
+  #    NOTE: like release-build, the .iq here is signed with a THROWAWAY key.
+  #    The beta app id is not registered on the store and must never be
+  #    submitted there; these artifacts exist for sideloading.
+  beta-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
+    container:
+      image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Generate throwaway developer key
+        run: |
+          set -eu
+          command -v openssl >/dev/null 2>&1 || { apt-get update && apt-get install -y openssl; }
+          openssl genrsa -out developer_key.pem 4096
+          openssl pkcs8 -topk8 -inform PEM -outform DER \
+            -in developer_key.pem -out developer_key.der -nocrypt
+
+      - name: Release-compile the beta variant for every device
+        run: |
+          set -u
+          if command -v monkeyc >/dev/null 2>&1; then MONKEYC="$(command -v monkeyc)"
+          elif [ -x /connectiq/bin/monkeyc ]; then MONKEYC=/connectiq/bin/monkeyc
+          else MONKEYC="$(find / -type f -name monkeyc 2>/dev/null | head -1)"; fi
+          [ -n "$MONKEYC" ] || { echo "::error::monkeyc not found in image"; exit 3; }
+          echo "monkeyc: $MONKEYC"
+          mkdir -p bin
+          fail=0
+          for dev in $DEVICES; do
+            echo "::group::beta release-compile $dev"
+            if "$MONKEYC" -f beta.jungle -o "bin/${APP_NAME}-Beta-$dev.prg" \
+                 -y developer_key.der -d "$dev" -r -w; then
+              echo "OK   $dev"
+            else
+              rc=$?
+              echo "::error::beta release compile failed for $dev (monkeyc rc=$rc)"
+              echo "FAIL $dev (rc=$rc)"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::one or more devices failed the beta release compile"
+            exit 1
+          fi
+          echo "all $(echo $DEVICES | wc -w) devices beta release-compiled OK"
+
+      - name: Export the beta package (.iq)
+        run: |
+          set -eu
+          if command -v monkeyc >/dev/null 2>&1; then MONKEYC="$(command -v monkeyc)"
+          elif [ -x /connectiq/bin/monkeyc ]; then MONKEYC=/connectiq/bin/monkeyc
+          else MONKEYC="$(find / -type f -name monkeyc 2>/dev/null | head -1)"; fi
+          [ -n "$MONKEYC" ] || { echo "::error::monkeyc not found in image"; exit 3; }
+          mkdir -p bin
+          # Mirrors tools/build_beta.sh: -e export, -r release, -w warnings.
+          "$MONKEYC" -e -r -w -f beta.jungle -y developer_key.der -o "bin/${APP_NAME}-Beta.iq"
+          ls -l "bin/${APP_NAME}-Beta.iq"
+
+      - name: Assert the built beta .prg carry the BETA application id
+        # An XML diff proves the file on disk changed; it does not prove monkeyc
+        # consumed it. The compiler embeds the application id in the .prg as 16
+        # RAW bytes, so hexdump each artifact and require the beta id present
+        # and the production id absent. Pure sh + coreutils - no assumption that
+        # this container ships python3.
+        # Caveat: the search is over a flattened nibble stream, so it is not
+        # byte-aligned; a false hit needs a specific 16-byte sequence to appear
+        # off-alignment, which is not a practical concern at these file sizes.
+        run: |
+          set -eu
+          idof() { sed -n 's/.*id="\([0-9a-fA-F]\{32\}\)".*/\1/p' "$1" | head -1 | tr 'A-Z' 'a-z'; }
+          PROD=$(idof manifest.xml)
+          BETA=$(idof manifest.beta.xml)
+          [ -n "$PROD" ] || { echo "::error::no 32-hex app id in manifest.xml"; exit 1; }
+          [ -n "$BETA" ] || { echo "::error::no 32-hex app id in manifest.beta.xml"; exit 1; }
+          [ "$PROD" != "$BETA" ] || { echo "::error::manifest ids identical - nothing to assert"; exit 1; }
+          echo "production id: $PROD"
+          echo "beta id:       $BETA"
+          n=0; bad=0
+          for f in bin/*-Beta-*.prg; do
+            [ -f "$f" ] || { echo "::error::no beta .prg found to inspect"; exit 1; }
+            n=$((n+1))
+            hex=$(od -An -v -tx1 "$f" | tr -d ' \n')
+            ok=1
+            case "$hex" in *"$BETA"*) : ;; *) echo "::error::$f does NOT embed the beta app id"; ok=0 ;; esac
+            case "$hex" in *"$PROD"*) echo "::error::$f embeds the PRODUCTION app id"; ok=0 ;; *) : ;; esac
+            if [ "$ok" -eq 1 ]; then echo "OK   $f"; else bad=$((bad+1)); fi
+          done
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::$bad/$n beta .prg carried the wrong application id"
+            exit 1
+          fi
+          echo "all $n beta .prg embed $BETA and not $PROD"
+
+      - name: Upload beta .prg + .iq artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: beta-artifacts
+          path: |
+            bin/*-Beta-*.prg
+            bin/*-Beta.iq
+          if-no-files-found: warn
+          retention-days: 7
+
+  # 6) ci-required - the SINGLE stable status to require in branch protection.
   #    GitHub treats a SKIPPED required check as PASSED, so the aggregator must
   #    RUN on every PR (if: always()) and post a real `failure` when anything
   #    upstream is not `success` - a skipped/cancelled/failed dependency has to
@@ -211,9 +340,16 @@ jobs:
   #    the gate: the check iterates toJSON(needs), so any job added to `needs`
   #    is enforced automatically. Contract: every job in `needs` MUST run
   #    unconditionally (no job-level `if:`), so a skip is always a real fault.
+  #
+  #    beta-build IS in `needs`, deliberately. It satisfies the contract - no
+  #    job-level `if:`, so it runs on every PR and a skip really is a fault -
+  #    and it is the only job that consumes manifest.beta.xml / beta.jungle.
+  #    Left advisory, those two files could break and merge green, and the
+  #    beta's whole purpose (installing beside production for an A/B ride) is
+  #    only usable if it actually builds.
   ci-required:
     runs-on: ubuntu-latest
-    needs: [manifest-lint, compile-unit-test, release-build]
+    needs: [manifest-lint, compile-unit-test, release-build, beta-build]
     if: always()
     steps:
       - name: Assert every required job succeeded
