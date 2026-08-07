@@ -78,6 +78,19 @@ function cbvRelEq(a, b, rel) {
     return d <= rel * m;
 }
 
+// Absolute window. Deliberately NOT cbvRelEq(): that helper floors its
+// magnitude at 1.0, so below ~1.0 it silently degenerates into an absolute
+// tolerance and an assertion written as "relative" stops being one. Every
+// reconFactor() quantity asserted in this file is O(1) or smaller (1.0, 1.3,
+// 0.5), so the window is stated in absolute terms on purpose and the number in
+// the call site is the real tolerance.
+(:debug)
+function cbvNear(a, b, eps) {
+    var d = a - b;
+    if (d < 0.0) { d = -d; }
+    return d <= eps;
+}
+
 // Fresh view primed at t=1000 (dt=0, no update), then `n` active samples at
 // constant `power`, 1 Hz. Internal timer ends at (1000 + 1000*n) ms.
 (:debug)
@@ -405,6 +418,41 @@ function test_coast_cold_start_null_and_zero(logger) {
     logger.debug("afterNull=" + afterNull + " afterZero=" + afterZero
                  + " stillUnseeded=" + stillUnseeded + " coastSec=" + v.mCoastSec);
     return afterNull && afterZero && stillUnseeded;
+}
+
+// -------- #59: reconFactor() characterization (pre-existing contract) --------
+
+// CHARACTERIZATION. Pins the part of reconFactor()'s contract that the #59
+// bound must NOT disturb, on arms it is green for both before and after that
+// change: the plain ratio for a healthy denominator, and 1.0 on each of the
+// three degenerate inputs.
+//
+// It is also the anti-vacuity guard for the #59 tests further down: those two
+// assert that recon FALLS BACK to 1.0 in a cold-start window, and `return 1.0;`
+// would satisfy them both. This test is what makes that mutant red.
+//
+// The 2.5 arm is deliberate and is the reason it is here rather than folded
+// into an existing test. It records that the intended upper bound is ABOVE 2.0:
+// 2.0 is exactly the third arm of test_zonecolor_recon_invariant (:423 at the
+// time of writing), so a bound of 2.0 would leave that test passing on the
+// coincidence that clamping 2.0 to 2.0 is a no-op. 2.5 has no such excuse.
+(:test)
+function test_recon_factor_current_shape(logger) {
+    var v = cbvNewView();
+    v.mModelKcal = 100.0; v.mGarminKcal = 130.0; var r13 = v.reconFactor();
+    v.mModelKcal = 100.0; v.mGarminKcal = 200.0; var r20 = v.reconFactor();
+    v.mModelKcal = 100.0; v.mGarminKcal = 250.0; var r25 = v.reconFactor();
+    v.mModelKcal = 0.0;   v.mGarminKcal = 0.0;   var bothZero = v.reconFactor();
+    v.mModelKcal = 100.0; v.mGarminKcal = 0.0;   var noGarmin = v.reconFactor();
+    v.mModelKcal = 0.0;   v.mGarminKcal = 130.0; var noModel  = v.reconFactor();
+    var live = cbvNear(r13, 1.3, 0.000001) && cbvNear(r20, 2.0, 0.000001)
+               && cbvNear(r25, 2.5, 0.000001);
+    var degenerate = cbvNear(bothZero, 1.0, 0.0) && cbvNear(noGarmin, 1.0, 0.0)
+                     && cbvNear(noModel, 1.0, 0.0);
+    logger.debug("live=" + live + " (" + r13 + "/" + r20 + "/" + r25 + ")"
+                 + " degenerate=" + degenerate
+                 + " (" + bothZero + "/" + noGarmin + "/" + noModel + ")");
+    return live && degenerate;
 }
 
 // -------- #15: fat-max BLUE band is reconFactor()-invariant --------
