@@ -17,7 +17,7 @@ stock GitHub-hosted `ubuntu-latest`:
 
 | Job | Container? | Required? | What it does |
 |---|---|---|---|
-| `manifest-lint` | no | ✅ | Fails if a manifest app id is missing/placeholder/malformed, **or if two manifests share an id**. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. Invoked with **no arguments**, so it discovers `manifest.xml` + every `manifest.<variant>.xml` — an enumerated arg list is one somebody can quietly shorten. |
+| `manifest-lint` | no | ✅ | Fails if a manifest app id is missing/placeholder/malformed, **if two manifests share an id**, or **if `manifest.xml`'s id is not the pinned registered literal**. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. Invoked with **no arguments**, so it discovers `manifest.xml` + every `manifest.<variant>.xml` — an enumerated arg list is one somebody can quietly shorten. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
 | `release-build` | yes | ✅ | Release-compiles every device, **asserts every shipped `.prg` embeds the registered application id and not the beta one**, then exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
 | `beta-build` | yes | ✅ | The parallel-install **beta** variant (`beta.jungle` → `manifest.beta.xml`, separate application id): release-compiles every device, exports its `.iq`, then hexdumps each beta `.prg` to assert it embeds the **beta** application id and not the production one. Uploads `beta-artifacts`. |
@@ -72,6 +72,23 @@ Both iterate `env.DEVICES` rather than globbing, so a missing artifact fails too
 (a glob would silently assert over whatever happened to be there), and
 `bin/CarbBurn-*.prg` cannot accidentally sweep in the beta artifacts.
 
+**"Registered" is two checks composed — do not weaken either half.** The
+`release-build` guard reads its expected value *out of `manifest.xml`*, so on
+its own it asserts only that the artifact agrees with the manifest it was built
+from. Measured: substitute a fabricated id into `manifest.xml` and `monkeyc`
+still exits 0 and the guard still passes, printing the fabricated value under
+`registered id:`. What makes the word *registered* true is the other half —
+`manifest-lint` pins `manifest.xml`'s id to the literal
+`EXPECTED_PRODUCTION_ID` in `scripts/check_manifest_appid.py`, so the id cannot
+drift in the first place. Both jobs are in `ci-required.needs`.
+
+That pin is not hypothetical insurance: `CHANGELOG.md` records "Restored the
+registered application id" under 1.3, and `git log -S` places it at `9b3e238`
+(changed) → `3e4ae5c` (restored). The class has occurred once here, under CI
+that could not see it. The cost is that a genuine re-registration must edit two
+files, which is the intent — `manifest.xml`'s own header says the id must never
+change.
+
 The `release-build` half is the one that matters most, and it exists because the
 beta variant created the hole. With two manifests in the tree, a one-line
 repoint of `monkey.jungle` at `manifest.beta.xml` compiles clean on all 13
@@ -83,6 +100,14 @@ package from being produced at all.
 
 Both steps are `sh` + coreutils on purpose — they do not assume the SDK
 container ships `python3`.
+
+**Known asymmetry:** on the beta side the `.iq` is exported *before* its guard
+runs, the reverse of the release side, and the artifact upload is
+`if: always()` — so a **red** `beta-build` can still publish a `beta-artifacts`
+bundle whose `.iq` carries the wrong application id. Lower stakes than the
+release side (that `.iq` is throwaway-key-signed, never submittable, and the
+`.prg` is the sideload channel), but check the job status before installing
+anything from a run. Tracked for reordering.
 
 See the README for how to build and sideload the beta.
 

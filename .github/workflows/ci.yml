@@ -146,6 +146,17 @@ jobs:
   #    lints clean and exports a store .iq under the UNREGISTERED beta id, which
   #    manifest.xml:2-4 says must never happen. Nothing else in this workflow
   #    would notice.
+  #
+  #    "REGISTERED" is a claim about TWO checks composed, and neither half is
+  #    sufficient alone - be careful before weakening either:
+  #      * manifest-lint pins manifest.xml's id to the registered literal
+  #        (EXPECTED_PRODUCTION_ID in scripts/check_manifest_appid.py), so the
+  #        id in the manifest cannot drift;
+  #      * this step ties the built .prg to whatever manifest.xml says.
+  #    Measured: with a fabricated id substituted into manifest.xml, monkeyc
+  #    still exits 0 and THIS STEP still passes (it would print the fabricated
+  #    value under "registered id:") - only the lint's pin reds. manifest-lint
+  #    is in ci-required.needs, so the composition is what blocks the merge.
   release-build:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
@@ -204,6 +215,12 @@ jobs:
         # same project.manifest, so a repoint that would poison the .iq poisons
         # these .prg first - measured: in the swapped-jungle mutant, the 13 .prg
         # and the .iq internal manifest carry the beta id together.
+        #
+        # NOTE on the label "registered": $PROD below is read out of
+        # manifest.xml, so THIS step alone asserts only that the artifact agrees
+        # with the manifest it was built from. What makes "registered" true is
+        # manifest-lint's pin of manifest.xml to the literal registered id. Both
+        # are required jobs; do not weaken one assuming the other covers it.
         #
         # sh + coreutils, not python3: nothing has established that this
         # container ships python3. Caveat: the search is over a flattened nibble
@@ -287,7 +304,8 @@ jobs:
   #    that it compiles.
   #
   #    NOTE: like release-build, the .iq here is signed with a THROWAWAY key.
-  #    The beta app id is not registered on the store and must never be
+  #    The beta app id was not registered on the store by this project (see
+  #    manifest.beta.xml for the canonical wording) and must never be
   #    submitted there; these artifacts exist for sideloading.
   beta-build:
     runs-on: ubuntu-latest
