@@ -1,9 +1,27 @@
-Version 1.4 - What's new
+Version 1.4
 
-- Supports the fenix 9 family. Carb Burn now builds for fenix 9 (43/47 mm), fenix 9 Pro (43/47/51 mm) and fenix 9 Pro Solar (47/51 mm), alongside the Edge and fenix models it already supported. Note that no fenix 9 has ridden this field yet - it is known to build for them, not yet proven on one.
+- Supports the fenix 9 family: fenix 9 (43/47 mm), fenix 9 Pro (43/47/51 mm) and fenix 9 Pro Solar (47/51 mm). The field builds for these watches but has not yet been ridden on one.
+- The first minute of a ride no longer records an inflated carb/fat rate. Carb Burn scales its power model to your watch's calorie total, and at the very first pedal stroke there was almost no model energy to divide by - so if your watch had already counted calories (a late-waking power meter, a timer started before you roll out, a light at the start), the rate written to your FIT file could be several times too high. That scaling is now bounded.
+- A dropping-out power meter no longer under-reads your carb rate. A missing reading is now told apart from a real 0 W and carried at your last known power for up to 2.5 seconds. Note this means a ride through a flaky meter records MORE carbohydrate than the same ride did on 1.3 - the old version silently threw that work away. Rides without dropouts are unchanged.
+- The carb % reads "--" instead of a number when almost no fuel is burning, and the colour greys out with it.
 
-- The first minute of a ride no longer records an inflated carb/fat rate. The field rescales its power model to your watch's calorie total; at the first pedalling sample there is almost no model energy to divide by, so if your watch had already counted calories - a power meter that wakes late, a timer started before you roll out, a light at the start - the rate written to your FIT file could be several times too high. That rescaling is now bounded.
+Version 1.3
 
-- A flaky power meter no longer under-reads your carb rate. A missing reading is now told apart from a measured 0 W and modelled at your last known power for up to 2.5 seconds. Note this means a ride through a dropping-out meter now records MORE carbohydrate than the same ride did on 1.3 - the old version silently discarded that work. Rides without dropouts are unchanged.
+- Red zone now starts at your FTP. Red previously began near the 90%-carb power, which for most riders sits above FTP, so it rarely appeared. Red now flags efforts above your one-hour power.
 
-- The carb % reads "--" instead of a number when there is almost no substrate being burned, and the colour greys out with it, rather than showing a percentage of nearly nothing.
+Version 1.2
+
+- The colour no longer lags the numbers. The rolling readouts and their zone colour now come from the same values.
+- The blue fat-max band is defined by grams per hour rather than watts, so it marks where you are actually burning the most fat.
+- Better readability on light backgrounds.
+- The per-second FIT fields now record rates in grams per hour, not running totals. Cumulative grams are recorded as ride totals.
+- Larger grid text on big screens such as the Edge 1050.
+
+Version 1.0
+
+- Real-time carbohydrate and fat burn estimated from power, anchored to your FTP and LT1.
+- Layouts that adapt to the field shape, including a full-screen grid showing rolling, lap and ride-average carb g/h, fat g/h and carb %.
+- Carbs spent and a glycogen-remaining gauge from your body weight.
+- Fuelling-equilibrium power: the wattage at which your carb burn matches what you are eating.
+- Carb and fat recorded into the FIT file for post-ride review.
+- Settings for FTP, LT1, gross efficiency, body weight and carb intake.
