@@ -36,7 +36,9 @@ env:
   # The CI device matrix MUST equal the manifest <iq:products> list.
   DEVICES: >-
     edge530 edge830 edge540 edge840 edge1030 edge1030plus edge1040 edge1050
-    edgeexplore2 fenix6pro fenix7 fenix8pro47mm fr955
+    edgeexplore2 fenix6pro fenix7 fenix8pro47mm fenix943mm fenix947mm
+    fenix9pro43mm fenix9pro47mm fenix9pro51mm fenix9prosolar47mm
+    fenix9prosolar51mm fr955
   # NOTE: the SDK container digest is pinned at each `container.image` below and
   # deliberately NOT kept here as well - `container.image` cannot read the `env`
   # context, so an env copy would be a dead pin that silently drifts.
@@ -113,7 +115,7 @@ jobs:
           retention-days: 7
 
   # 3) run-tests - NOT WIRED, and now for a MEASURED reason rather than a guess.
-  #    The (:test) suite (source/CarbBurnTest.mc) is COMPILE-gated across all 13
+  #    The (:test) suite (source/CarbBurnTest.mc) is COMPILE-gated across all 20
   #    devices by compile-unit-test above.
   #
   #    #28's control experiment has been run and answered: this job was wired

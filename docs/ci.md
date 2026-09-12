@@ -20,14 +20,18 @@ stock GitHub-hosted `ubuntu-latest`:
 | `manifest-lint` | no | ✅ | Fails if the manifest app id is missing/placeholder/malformed. A bad id still compiles and still passes tests, so only this check catches that store-rejection class. |
 | `compile-unit-test` | yes | ✅ | Compiles a `--unit-test` build for **every** manifest device in one job (image pulls once). Fails only on a non-zero `monkeyc` exit; `-w` raises warnings but does not fail (the codebase is intentionally untyped, so no `-l 3`). |
 | `release-build` | yes | ✅ | Release-compiles every device **and** exports the store `.iq`. For a `datafield`, `monkeyc` exits non-zero when the static image exceeds the target's data-field memory limit — so a non-zero exit **is** the memory-budget assertion. Uploads the per-device `.prg` + `.iq` as artifacts. |
-| `run-tests` | — | not wired (measured) | Headless `(:test)` **execution** is not a CI job: with the constructor abort already fixed, `monkeydo` still timed out in this container (run `30129233091`, `rc=124`) — see below. The suite's **compilation** is gated regardless by `compile-unit-test` (13 devices). |
+| `run-tests` | — | not wired (measured) | Headless `(:test)` **execution** is not a CI job: with the constructor abort already fixed, `monkeydo` still timed out in this container (run `30129233091`, `rc=124`) — see below. The suite's **compilation** is gated regardless by `compile-unit-test` (20 devices). |
 | `ci-required` | no | ✅ | Aggregator. Runs on every PR (`if: always()`) and **fails** unless every job in `needs` concluded `success` (iterates `toJSON(needs)`, so a skipped/cancelled/failed dep posts a real `failure`, not a skip). **This is the single status name to require in branch protection.** |
 | `advisory-lint` | no | ⚠️ advisory | `continue-on-error`, out of `ci-required.needs`. Flags `System.println` / `TODO` / `FIXME` as annotations. Never blocks a merge. |
 
-The **device matrix equals the manifest `<iq:products>` list** (13 devices:
+The **device matrix equals the manifest `<iq:products>` list** (20 devices:
 `edge530 edge830 edge540 edge840 edge1030 edge1030plus edge1040 edge1050
-edgeexplore2 fenix6pro fenix7 fenix8pro47mm fr955`). If you add or remove a
-device in `manifest.xml`, update `env.DEVICES` in the workflow to match.
+edgeexplore2 fenix6pro fenix7 fenix8pro47mm fenix943mm fenix947mm
+fenix9pro43mm fenix9pro47mm fenix9pro51mm fenix9prosolar47mm
+fenix9prosolar51mm fr955`). If you add or remove a device in `manifest.xml`,
+update `env.DEVICES` in the workflow to match. Nothing enforces that equality
+yet (#46); until it does, the two lists are kept in step by hand, in the same
+commit.
 
 ## Branch protection — must be set by a repo admin
 
@@ -99,7 +103,7 @@ a new device product id isn't in SDK 9.2.0):
 
 The repo ships `(:test)` functions (`source/CarbBurnTest.mc`, the epic #22
 rolling-metrics suite). Their **compilation is CI-gated**: `compile-unit-test`
-builds `--unit-test` for all 13 devices on every PR (in `ci-required.needs`), so
+builds `--unit-test` for all 20 devices on every PR (in `ci-required.needs`), so
 a test that doesn't compile fails a required check.
 
 **Headless execution is not wired — and we now know why, by measurement.**
