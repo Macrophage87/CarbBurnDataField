@@ -5,6 +5,10 @@ All notable changes to **Carb Burn** are documented here. Format based on
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [1.4] — 2026-09-12
+
 ### Fixed
 
 - **The carb % no longer stays high while the carb rate reads near zero, and an
