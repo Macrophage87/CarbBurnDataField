@@ -67,13 +67,33 @@ a new device product id isn't in SDK 9.2.0):
 1. Find a newer `ghcr.io/matco/connectiq-tester` tag that ships the device.
 2. Resolve its digest: `docker pull ghcr.io/matco/connectiq-tester:<tag>` then
    `docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/matco/connectiq-tester:<tag>`.
+   With no Docker daemon available, the registry answers directly - fetch an
+   anonymous token from
+   `https://ghcr.io/token?scope=repository:matco/connectiq-tester:pull&service=ghcr.io`,
+   then read the `Docker-Content-Digest` response header of
+   `HEAD https://ghcr.io/v2/matco/connectiq-tester/manifests/<tag>` (send the
+   manifest/index `Accept` types). Sanity-check the method by resolving the tag
+   that is currently pinned and confirming it returns the digest already in
+   `ci.yml`. `.../tags/list` enumerates the tags. Re-resolve the digest yourself;
+   never paste one from a report.
 3. Replace **every** `container.image` value in `ci.yml` (currently two:
    `compile-unit-test` and `release-build`) with the new `@sha256:...`, and update
-   the `# vX.Y.Z = SDK ...` comment. The digest is the pin; the tag lives only in
+   the `# vX.Y.Z ...` comment. Grep the old digest afterwards and confirm zero
+   hits, **including the paste-ready `run-tests` stanza further down this file** -
+   that is a third copy, and a missed one is the dead-pin trap of #14. State the
+   SDK version in the comment only if you have measured it: both container jobs
+   echo `monkeyc --version` into the run log, so read it from there rather than
+   inferring it from the tag. The digest is the pin; the tag lives only in
    the comment. There is deliberately no `env` copy of the digest —
    `container.image` cannot read the `env` context, so an `env` entry would be a
    dead pin free to drift out of sync. If you re-add the `run-tests` stanza
    below, its image needs the same bump.
+4. Land the bump as **its own commit with its own CI run**, before any change that
+   adds a device. A bump changes the SDK for every job, so it has to be proved
+   against the *existing* device list and the existing tests with nothing else
+   touched - otherwise a failure cannot be attributed to the bump or to the new
+   device. Compare the new run's per-device `.prg` sizes against the previous
+   run's artifacts, not just the pass/fail.
 
 ## Unit tests
 
@@ -135,7 +155,7 @@ addition enforces it, provided the job runs unconditionally (no job-level `if:`)
     continue-on-error: true
     timeout-minutes: 20
     container:
-      image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
+      image: ghcr.io/matco/connectiq-tester@sha256:64958e8fd2925d0c4986d72a9aa9d8e2101297a881354aab0118be2f1dc22105 # v2.10.0 (image built 2026-09-01); SDK version is echoed by the build step, not asserted here
     env:
       TEST_DEVICE: edge840   # one representative device; the (:test) suite is device-independent
     steps:

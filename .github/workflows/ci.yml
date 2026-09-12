@@ -59,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
     container:
-      image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
+      image: ghcr.io/matco/connectiq-tester@sha256:64958e8fd2925d0c4986d72a9aa9d8e2101297a881354aab0118be2f1dc22105 # v2.10.0 (image built 2026-09-01); SDK version is echoed by the build step, not asserted here
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -79,6 +79,9 @@ jobs:
           else MONKEYC="$(find / -type f -name monkeyc 2>/dev/null | head -1)"; fi
           [ -n "$MONKEYC" ] || { echo "::error::monkeyc not found in image"; exit 3; }
           echo "monkeyc: $MONKEYC"
+          # Record the SDK the pinned image actually ships, so the digest
+          # comment above is a measured fact and not a claim (see #14).
+          "$MONKEYC" --version || true
           mkdir -p bin
           fail=0
           for dev in $DEVICES; do
@@ -136,7 +139,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20   # hard cap so a hung compiler fails the job instead of the run
     container:
-      image: ghcr.io/matco/connectiq-tester@sha256:7a6f586cb0e0393ff288da09cf27b6dad40a0058a346c529b99fd0fc19858f0f # v2.8.0 = SDK 9.2.0
+      image: ghcr.io/matco/connectiq-tester@sha256:64958e8fd2925d0c4986d72a9aa9d8e2101297a881354aab0118be2f1dc22105 # v2.10.0 (image built 2026-09-01); SDK version is echoed by the build step, not asserted here
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
@@ -156,6 +159,9 @@ jobs:
           else MONKEYC="$(find / -type f -name monkeyc 2>/dev/null | head -1)"; fi
           [ -n "$MONKEYC" ] || { echo "::error::monkeyc not found in image"; exit 3; }
           echo "monkeyc: $MONKEYC"
+          # Record the SDK the pinned image actually ships, so the digest
+          # comment above is a measured fact and not a claim (see #14).
+          "$MONKEYC" --version || true
           mkdir -p bin
           fail=0
           for dev in $DEVICES; do
