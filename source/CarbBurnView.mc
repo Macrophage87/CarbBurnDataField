@@ -89,7 +89,11 @@ class CarbBurnView extends WatchUi.DataField {
     // ---- Display values (reconciled where relevant) ----
     private var mGramsCho;   // total carb grams
     private var mGramsFat;   // total fat grams
-    var mRateDisp;   // carb g/hr rolling (reconciled) (not private: read by tests)
+    // mRateDisp is not private: it is the exact value setFitData() clamps into
+    // the carb_rate RECORD field, so the #59 tests pin it directly rather than
+    // recomputing mCarbRate * reconFactor() beside the production expression
+    // and pinning their own arithmetic.
+    var mRateDisp;           // carb g/hr rolling (reconciled)
     private var mPctCho;     // overall carb %
     private var mGlycPct;    // % of glycogen stores used
 
@@ -158,6 +162,69 @@ class CarbBurnView extends WatchUi.DataField {
     // The one sentinel this field renders in place of a number. Single-sourced so
     // carbPctStr(), drawGrid()'s glycogen cells and valueFont() cannot disagree.
     private const NO_VALUE         = "--";
+
+    // ---- reconFactor() bounds (#59) ----
+    // reconFactor() guarded a ZERO denominator but not a SMALL one. At the
+    // first powered sample of a session the denominator is a single sample of
+    // model kcal (0.227625 at 200 W, measured), so the factor was Garmin's
+    // whole cumulative kcal divided by that - unbounded, and it multiplies the
+    // g/h written to the carb_rate and fat_rate FIT RECORD fields. Measured at
+    // 0698921 with this guard reverted: 4.393200x at 200 W with the smallest
+    // reportable calorie count, 351.455963x after a neutral roll-out, writing
+    // 487 and 10650 g/h against true rates of 110.9 and 30.3. (Re-measured
+    // after #37 restructured the accrual that produces mModelKcal; every
+    // figure here is unchanged by that restructure.)
+    //
+    // RECON_MIN_KCAL - minimum denominator. Below it the field reports the pure
+    //   power model (factor 1.0), which is the only other self-consistent scale
+    //   it already owns; it does not invent a number. 10.0 kcal is ~44 s at
+    //   200 W and ~88 s at 100 W, over which the un-reconciled carbohydrate
+    //   TOTAL reaches ~1.35 g at 200 W (~0.12 g at 100 W - the window is
+    //   fixed in kcal, so the grams scale with choFraction). That total is a
+    //   level, not a difference: mGramsCho = mModelCarbKcal * recon /
+    //   KCAL_PER_G rescales the whole accumulator, so suppressing the factor
+    //   costs total * (recon - 1), not total. The step at release is below.
+    // RECON_MAX - upper bound, and the load-bearing half. A floor alone only
+    //   converts an unbounded error into a large one: measured, a 10 kcal floor
+    //   with no clamp still writes 664 g/h at the release sample after a
+    //   15-minute roll-out, against a true 110.9 - raw factor 60/10.015479 =
+    //   5.990727, with the numerator frozen at 60 through the powered phase.
+    //   If the device instead keeps counting through that phase the release
+    //   factor is higher still, and the two constructible counting models
+    //   differ by one sample. If info.calories for a sample already includes
+    //   that sample's energy, the count at release is (60 + 10.015479)
+    //   truncated = 70 kcal: factor 6.989182 -> 775 g/h. If it lags the model
+    //   by one sample it is (60 + 9.787854) truncated = 69 kcal: factor
+    //   6.889336 -> 764 g/h. Which one a real device follows is unmeasured -
+    //   #67 is what would measure it. An earlier revision of this comment
+    //   gave "664-775" without naming the model; 664 stays the lower bound
+    //   under all three, because any further accrual only raises the factor.
+    //   A later revision withdrew 775 as "not reproducing"; that withdrawal
+    //   was wrong - 775 is the NO-LAG model, measured, and it is restored.
+    //   3.0 rather than 2.0 deliberately: 2.0 is exactly the third arm pinned
+    //   by test_zonecolor_recon_invariant, so a bound of 2.0 would leave that
+    //   test passing on the coincidence that clamping 2.0 to 2.0 is a no-op.
+    //   3.0 also sits above every factor produced by any whole-ride sweep run
+    //   on this model (maximum observed 1.435102).
+    // RECON_MIN - lower bound. The clamp is symmetric because info.calories is
+    //   an integer: the same small-denominator window can also produce a factor
+    //   BELOW 1.0 when it truncates, so #59's direction of error is not
+    //   unambiguously upward. Defensive: no sweep has reached it (minimum
+    //   observed 0.959536), and a binding lower clamp INFLATES reported grams,
+    //   so it sits well below anything measured rather than close to 1.0.
+    //
+    // The bound is a per-sample step in the reported rate when it engages or
+    // disengages (measured 111 -> 333 g/h at the release sample). In cumulative
+    // grams that step is ~1.4 g -> ~4 g, i.e. negligible against the product,
+    // but it is a discontinuity and it is deliberate.
+    //
+    // These bound the ARITHMETIC only. Nothing here gates a setData() call:
+    // record-scope FIT fields latch, so a skipped write would re-emit the
+    // previous value rather than produce a gap, and setFitData() stays
+    // unconditional for that reason.
+    private const RECON_MIN_KCAL   = 10.0;
+    private const RECON_MAX        = 3.0;
+    private const RECON_MIN        = 0.5;
 
     function initialize() {
         DataField.initialize();
@@ -654,9 +721,19 @@ class CarbBurnView extends WatchUi.DataField {
     }
 
     // Rescale magnitude to Garmin's calorie total when available (else 1.0).
+    //
+    // Bounded per #59: see the RECON_* block above for why each bound exists
+    // and why the clamp, not the floor, is the load-bearing one.
+    //
+    // The `mModelKcal > 0.0` clause is the DIVISION guard and is kept
+    // independently of RECON_MIN_KCAL: the floor is policy and may be retuned,
+    // the division must stay guarded either way.
     function reconFactor() {
-        if (mGarminKcal > 0.0 && mModelKcal > 0.0) {
-            return mGarminKcal / mModelKcal;
+        if (mGarminKcal > 0.0 && mModelKcal > 0.0 && mModelKcal >= RECON_MIN_KCAL) {
+            var r = mGarminKcal / mModelKcal;
+            if (r > RECON_MAX) { r = RECON_MAX; }
+            if (r < RECON_MIN) { r = RECON_MIN; }
+            return r;
         }
         return 1.0;
     }

@@ -31,6 +31,23 @@ All notable changes to **Carb Burn** are documented here. Format based on
   high over a falling rate — from 3 s to roughly 28 s from 100 g/h — but for that
   whole window the rate on screen is still substantial, which is the case the old
   3 s rule got wrong in the other direction.
+- **The first minute of a ride no longer records an inflated carb/fat rate.**
+  The field rescales its power model to your watch's own calorie total. That
+  rescaling divided by however much energy the *model* had counted so far, and
+  at the first pedalling sample of a session that is a fraction of a kcal — so
+  if your watch had already counted any calories (a power meter that wakes late,
+  a timer started before you roll out, a traffic light at the start), the
+  rescaling factor could reach several hundred. The `carb_rate` and `fat_rate`
+  values written into the FIT file were multiplied by it: measured in the
+  simulator, 487 g/h recorded against a true 111 g/h, and up to 10,650 g/h after
+  a neutral roll-out. Those numbers are plausible-looking sprint values, not
+  obvious errors, which is what made this worth fixing.
+  The rescaling is now bounded: it is not applied at all until the model has
+  counted 10 kcal (about 44 s at 200 W, during which the field shows the pure
+  power model), and the factor itself is held between 0.5x and 3x. Your
+  cumulative carbohydrate total over that whole unrescaled window is only about
+  1.4 g at 200 W (about 0.12 g at 100 W), so the rescaling it forgoes there is
+  a fraction of a gram either way.
 
 ### Changed
 
@@ -62,7 +79,8 @@ All notable changes to **Carb Burn** are documented here. Format based on
   glycogen store). **A ride with no dropouts is bit-for-bit unaffected.**
 
   Two things bound it. A single gap contributes at most 2.5 s no matter how long
-  it lasts (measured: a 300 s gap contributes 2.500001 s), so a meter that drops
+  it lasts (measured at the default settings: a 300 s gap contributes
+  2.499996 s), so a meter that drops
   for 30 s at a time recovers under a tenth of the lost time, not all of it. And
   accrued pedalling time can never exceed elapsed timer time — the last two rows
   above sit exactly on that ceiling, which is why they stop at the no-dropout

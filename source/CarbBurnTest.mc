@@ -118,6 +118,12 @@ function cbvRelEq(a, b, rel) {
 // zero pass absTol = 0.0 and state the anti-vacuity guard themselves
 // (`target > 0.0`). The window is then purely proportional, it scales all the
 // way down, and there is no constant to re-derive when the model changes.
+//
+// The reconFactor() pins from #59 use the other end of the same helper: their
+// quantities are O(1) fixed targets (1.0, 1.3, 2.0, 0.5) that are never
+// legitimately near zero, so they pass an explicit absTol with relTol = 0.0
+// and the window in the call site IS the tolerance. One helper, one rationale;
+// do not add a second near-equality helper for either pattern.
 (:debug)
 function cbvClose(a, b, absTol, relTol) {
     var d = a - b;
@@ -428,8 +434,8 @@ function test_dropout_carry_and_grace_boundary(logger) {
 // code does, and the straddle test above is what proves the split is real.
 (:test)
 function test_dropout_carry_bounded_on_one_long_sample(logger) {
-    var v = cbvWarmView(400, 20);
-    var t = 21000;
+    var v = cbvWarmView(400, 60);
+    var t = 61000;
     // Measure this view's kcal for exactly 1 s of active 400 W.
     //
     // The Garmin calorie total fed on this sample is what gives the mRateDisp
@@ -437,12 +443,27 @@ function test_dropout_carry_bounded_on_one_long_sample(logger) {
     // with no calorie feed reconFactor() returns exactly 1.0, so the two sides
     // are bit-identical BY CONSTRUCTION and the assertion cannot fail whatever
     // the code does - it was a tautology, and #33's "assert on mRateDisp" went
-    // unsatisfied. 500 kcal against the ~7-14 kcal this view has modelled by
-    // now puts recon in the tens at every legal gross efficiency. It touches
-    // nothing else asserted here: recon feeds only the display values, not
-    // mCarbRate / mFatRate / mCarbPctRoll / mFluxLow.
+    // unsatisfied. It touches nothing else asserted here: recon feeds only the
+    // display values, not mCarbRate / mFatRate / mCarbPctRoll / mFluxLow.
+    //
+    // The witness had to be REBUILT for #59's bound, and this is the whole
+    // reason the warm-up is 60 samples rather than 20. It used to warm 20
+    // samples and feed a flat 500 kcal, which put recon "in the tens" - but
+    // that factor came from a denominator of 7-14 modelled kcal, i.e. it WAS
+    // the #59 defect, and at the repo default gross efficiency (21 %) the
+    // denominator was 9.560 kcal, below RECON_MIN_KCAL. reconFactor() now
+    // correctly returns 1.0 there and the arm went vacuous-and-false. So:
+    //   - 60 warm samples put the denominator at 20.8-38.9 kcal across the
+    //     legal gross-efficiency range (15-28 %), at least 2x the floor, so the
+    //     floor cannot engage at any legal setting; and
+    //   - the calorie total is DERIVED from this view's own modelled kcal
+    //     rather than fixed, so recon lands at ~1.5 - inside the 0.5-3.0 band
+    //     at every legal setting, and this arm therefore exercises the
+    //     multiplication rather than the clamp. A fixed number cannot do that:
+    //     the denominator moves by 1.9x across the legal range.
+    var calFeed = (v.mModelKcal * 1.6).toNumber();
     var k0 = v.mModelKcal;
-    t += 1000; v.compute(mkInfo(400, t, 500));
+    t += 1000; v.compute(mkInfo(400, t, calFeed));
     var kcalPerSec = v.mModelKcal - k0;
     var pctHeld = v.mCarbPctRoll;
     var before  = v.mModelKcal;
@@ -1007,6 +1028,241 @@ function test_fatmax_is_scan_argmax(logger) {
                  + " inGrid=" + inGrid + " isMax=" + isMax + " scanned=" + n
                  + " consistent=" + consistent);
     return inGrid && isMax && consistent && (n >= 16);
+}
+
+// -------- #59: reconFactor() characterization (pre-existing contract) --------
+
+// The #59 trigger, as one sequence: a prime sample, one COAST sample during
+// which Garmin has already counted `cal` kcal, then the first POWERED sample at
+// dt = 1 s. That leaves a numerator of `cal` over a denominator of exactly one
+// sample of model kcal. Every quantity is fed in; nothing is set directly.
+(:debug)
+function cbvColdStart(power, cal) {
+    var v = cbvNewView();
+    v.compute(mkInfo(null, 1000, null));      // prime, dt = 0
+    v.compute(mkInfo(null, 2000, cal));       // coast; Garmin is already counting
+    v.compute(mkInfo(power, 3000, cal));      // first powered sample, dt = 1 s
+    return v;
+}
+
+// Model kcal for ONE 1 s sample at `power`, from the view's own public model so
+// it stays settings-independent (CarbBurnTest.mc:14-19):
+//   carbRateAt(p) = frac * (p/GE)/4184 * 3600 / 4
+//   =>  (p/GE)/4184 = carbRateAt(p) * 4 / (frac * 3600)
+(:debug)
+function cbvExpectedKcalPerSec(v, power) {
+    return v.carbRateAt(power) * 4.0 / (v.choFraction(power) * 3600.0);
+}
+
+// MECHANISM pin, green before and after the #59 bound. It asserts the two
+// halves of the accrual asymmetry that creates the defect, and nothing about
+// the factor itself - so the bound may change the factor freely and this test
+// still has to hold:
+//   numerator   - a non-null info.calories reaches mGarminKcal from the COAST
+//                 sample, i.e. before the model has counted anything (:408-410);
+//   denominator - after the first powered sample mModelKcal is exactly ONE
+//                 sample of model kcal (:350), which is < 1 kcal at any legal
+//                 setting, i.e. two orders of magnitude under any floor worth
+//                 having.
+// It also pins the #8 warm-up seed that makes the spike visible: mCarbRate is
+// the true instantaneous rate, so whatever the factor does, it multiplies a
+// correct value.
+//
+// Incidentally this is the first test in the suite to feed a non-null
+// info.calories through compute() at all - part of #48's gap, not all of it
+// (#48 also wants mGarminKcal asserted to TRACK a series; that belongs there).
+(:test)
+function test_recon_cold_start_mechanism(logger) {
+    var v = cbvColdStart(200, 1);
+    var oneSample = cbvExpectedKcalPerSec(v, 200.0);
+    var numerator = cbvClose(v.mGarminKcal, 1.0, 0.000001, 0.0);
+    var denomIsOneSample = cbvClose(v.mModelKcal, oneSample, 0.0001 * oneSample, 0.0);
+    var denomIsTiny = (v.mModelKcal < 1.0) && (v.mModelKcal > 0.0);
+    var seeded = cbvClose(v.mCarbRate, v.carbRateAt(200.0),
+                         0.0001 * v.carbRateAt(200.0), 0.0) && (v.mRollN == 1);
+    logger.debug("numerator=" + numerator + " denomIsOneSample=" + denomIsOneSample
+                 + " denomIsTiny=" + denomIsTiny + " seeded=" + seeded
+                 + " garminKcal=" + v.mGarminKcal + " modelKcal=" + v.mModelKcal
+                 + " oneSample=" + oneSample + " carbRate=" + v.mCarbRate);
+    return numerator && denomIsOneSample && denomIsTiny && seeded;
+}
+
+// CHARACTERIZATION. Pins the part of reconFactor()'s contract that the #59
+// bound must NOT disturb, on arms it is green for both before and after that
+// change: the plain ratio for a healthy denominator, and 1.0 on each of the
+// three degenerate inputs.
+//
+// It is also the anti-vacuity guard for the #59 tests further down: those two
+// assert that recon FALLS BACK to 1.0 in a cold-start window, and `return 1.0;`
+// would satisfy them both. This test is what makes that mutant red.
+//
+// The 2.5 arm is deliberate and is the reason it is here rather than folded
+// into an existing test. It records that the intended upper bound is ABOVE 2.0:
+// 2.0 is exactly the third arm of test_zonecolor_recon_invariant (:423 at the
+// time of writing), so a bound of 2.0 would leave that test passing on the
+// coincidence that clamping 2.0 to 2.0 is a no-op. 2.5 has no such excuse.
+(:test)
+function test_recon_factor_current_shape(logger) {
+    var v = cbvNewView();
+    v.mModelKcal = 100.0; v.mGarminKcal = 130.0; var r13 = v.reconFactor();
+    v.mModelKcal = 100.0; v.mGarminKcal = 200.0; var r20 = v.reconFactor();
+    v.mModelKcal = 100.0; v.mGarminKcal = 250.0; var r25 = v.reconFactor();
+    v.mModelKcal = 0.0;   v.mGarminKcal = 0.0;   var bothZero = v.reconFactor();
+    v.mModelKcal = 100.0; v.mGarminKcal = 0.0;   var noGarmin = v.reconFactor();
+    v.mModelKcal = 0.0;   v.mGarminKcal = 130.0; var noModel  = v.reconFactor();
+    var live = cbvClose(r13, 1.3, 0.000001, 0.0) && cbvClose(r20, 2.0, 0.000001, 0.0)
+               && cbvClose(r25, 2.5, 0.000001, 0.0);
+    var degenerate = cbvClose(bothZero, 1.0, 0.0, 0.0) && cbvClose(noGarmin, 1.0, 0.0, 0.0)
+                     && cbvClose(noModel, 1.0, 0.0, 0.0);
+    logger.debug("live=" + live + " (" + r13 + "/" + r20 + "/" + r25 + ")"
+                 + " degenerate=" + degenerate
+                 + " (" + bothZero + "/" + noGarmin + "/" + noModel + ")");
+    return live && degenerate;
+}
+
+// -------- #59: the bound on reconFactor() (differentials) --------
+
+// DIFFERENTIAL for the FLOOR. The #59 trigger at 200 W with the smallest
+// non-zero integer info.calories can report. One sample of model kcal is
+// 0.227625 (measured, pinned by test_recon_cold_start_mechanism), two orders of
+// magnitude below any usable minimum denominator - so the factor must fall back
+// to 1.0 and carb_rate must carry the pure model rate, which #8's warm-up
+// seeding has already made exactly right.
+//
+// The fallback is 1.0 rather than some invented number because the pure power
+// model is the only other self-consistent scale the field already owns.
+//
+// RED before the fix: recon 4.393200 and mRateDisp 487 g/h against a true
+// 110.877800. Also red on a CLAMP-ONLY implementation: 3.000000 and 333 g/h.
+// This is the test that discriminates the floor.
+(:test)
+function test_recon_floor_suppresses_cold_start(logger) {
+    var v = cbvColdStart(200, 1);
+    var truth = v.carbRateAt(200.0);
+    var recon = v.reconFactor();
+    var suppressed = cbvClose(recon, 1.0, 0.000001, 0.0);
+    // Window stated RELATIVE to the view's own model, so it is both
+    // settings-independent and non-degenerate at settings where carbRateAt(200)
+    // is small - which a fixed absolute window, or cbvRelEq's m<1.0 floor,
+    // would not be.
+    var rateIsModel = cbvClose(v.mRateDisp, truth, 0.0001 * truth, 0.0);
+    logger.debug("recon=" + recon + " suppressed=" + suppressed
+                 + " rateIsModel=" + rateIsModel + " mRateDisp=" + v.mRateDisp
+                 + " true=" + truth + " FIT=" + v.clampU16(v.mRateDisp)
+                 + " FITtrue=" + v.clampU16(truth)
+                 + " modelKcal=" + v.mModelKcal + " garminKcal=" + v.mGarminKcal);
+    return suppressed && rateIsModel;
+}
+
+// DIFFERENTIAL for the CLAMP, and the reason the clamp is the load-bearing half
+// rather than the floor. 15 minutes of measured 0 W while Garmin counts to
+// 60 kcal, then 600 s at 200 W.
+//
+// The numerator is FROZEN at 60 through the powered phase. That makes no
+// assumption about how fast a device counts calories while pedalling (#67 is
+// open precisely because nobody has measured that), and it is the conservative
+// choice: any further accrual only raises the factor.
+//
+// 3.0 is a literal here, not a read of the production constant. A test that
+// reads RECON_MAX cannot fail when RECON_MAX is mutated, which is the
+// assertion-that-cannot-fail trap; the expected value has to be restated
+// independently or it pins nothing.
+//
+// `binding` pins the floor and the ceiling as a PAIR: at a 10 kcal floor the
+// raw factor at release is 60/10.0155 = 5.990727, above the ceiling, so the
+// ceiling engages and the maximum is exactly 3.0. A materially higher floor
+// would release below the ceiling and red this - deliberate, that pair is the
+// design. Without `binding` the whole test passes on `return 1.0;`.
+//
+// This test is also the ONLY upper constraint the suite puts on
+// RECON_MIN_KCAL, and it is a loose one. Measured on this tree: the suite is
+// green and unchanged at a floor of 0.23, 1.0, 19.5, 19.6, 19.7 and 19.8, and
+// reds only at 0.22 (the cold-start denominator is 0.227625, so a floor below
+// it stops suppressing the cold start) and at 19.81 (here). The upper break is
+// 60/3.0 = 20.0 kcal, reached in this test's 200 W steps of 0.227625 kcal,
+// i.e. 87 * 0.227625 = 19.803375 (measured: 19.8 green with maxRecon 3.000000,
+// 19.81 red with maxRecon 2.995361 = 60/(88 * 0.227625)). So any value in
+// ~[0.23, 19.80] passes unchanged and 10.0 is a design choice these tests do
+// NOT defend.
+//
+// An earlier revision of this comment derived that break from a 0.455247 kcal
+// step and put the window at ~[0.23, 19.57]. 0.455247 is the per-sample model
+// kcal at 400 W - the WITNESS fixture's power, not this test's. This test's
+// powered phase runs at 200 W (see mkInfo(200, ...) below), where the step is
+// half that. 19.6, 19.7 and 19.8 all pass, which that revision said they
+// should not. State the power the step belongs to.
+//
+// RED before the fix: peak factor 263.591980, peak carb_rate 29226 against a
+// ceiling of 333. Also red on a FLOOR-ONLY implementation: 5.990727 and 664
+// with the numerator frozen as this test freezes it. If a device instead keeps
+// counting through the powered phase the release factor is higher still, and
+// the two constructible counting models differ by one sample. If
+// info.calories for a sample already includes that sample's energy, the count
+// at release is (60 + 10.015479) truncated = 70 kcal: factor 6.989182 -> 775
+// g/h. If it lags the model by one sample it is (60 + 9.787854) truncated =
+// 69 kcal: factor 6.889336 -> 764 g/h. Both measured here, side by side on
+// this fixture. Which one a real device follows is unmeasured - #67 is what
+// would measure it - so freezing the numerator is the conservative choice:
+// 664 is the lower bound under all three, because any further accrual only
+// raises the factor. An earlier revision of this comment withdrew the
+// "6.989182 and 775" pair as "not reproducing here"; that withdrawal was
+// wrong - it is the NO-LAG model and it reproduces - and it is restored.
+(:test)
+function test_recon_never_exceeds_band_after_rollout(logger) {
+    var CEIL = 3.0;
+    var v = cbvNewView();
+    var t = 1000;
+    v.compute(mkInfo(0, t, null));                      // prime, dt = 0
+    for (var i = 1; i <= 900; i += 1) {                 // 15 min of measured 0 W
+        t += 1000;
+        v.compute(mkInfo(0, t, (60 * i) / 900));        // truncated integer kcal
+    }
+    // Precondition, not decoration: if the roll-out did not actually put
+    // 60 kcal in the numerator and nothing in the denominator, the rest of this
+    // test is measuring something else.
+    var rolledOut = cbvClose(v.mGarminKcal, 60.0, 0.000001, 0.0) && (v.mModelKcal == 0.0);
+    var maxRecon = 0.0;
+    var peak = 0;
+    for (var s = 1; s <= 600; s += 1) {                 // 10 min at 200 W
+        t += 1000;
+        v.compute(mkInfo(200, t, 60));
+        var r = v.reconFactor();
+        if (r > maxRecon) { maxRecon = r; }
+        var f = v.clampU16(v.mRateDisp);
+        if (f > peak) { peak = f; }
+    }
+    var truth     = v.carbRateAt(200.0);
+    var bounded   = (maxRecon <= CEIL + 0.000001);
+    var rateBound = (peak <= v.clampU16(CEIL * truth) + 1);
+    var binding   = (maxRecon >= CEIL - 0.000001);
+    logger.debug("rolledOut=" + rolledOut + " bounded=" + bounded
+                 + " rateBound=" + rateBound + " binding=" + binding
+                 + " maxRecon=" + maxRecon + " peakFIT=" + peak
+                 + " ceilFIT=" + v.clampU16(CEIL * truth) + " true=" + truth);
+    return rolledOut && bounded && rateBound && binding;
+}
+
+// DIFFERENTIAL for the LOWER half of the band. The clamp is symmetric because
+// info.calories is an integer: the same small-denominator window can also
+// produce a factor BELOW 1.0 when it truncates, which is why #59's direction of
+// error is NOT unambiguously upward (unlike #32's whole-ride bias).
+//
+// Driven by direct assignment, deliberately: no calorie series constructed
+// in-simulator has reached this bound - the minimum factor observed across the
+// design comment's ride sweeps was 0.959536 - so it is a defensive bound and is
+// stated as one. A binding lower clamp INFLATES the reported grams, so it is
+// set well below anything measured rather than close to 1.0.
+//
+// RED before the fix: 0.100000.
+(:test)
+function test_recon_lower_bound_clamps(logger) {
+    var v = cbvNewView();
+    v.mModelKcal  = 100.0;
+    v.mGarminKcal = 10.0;
+    var r = v.reconFactor();
+    var clamped = cbvClose(r, 0.5, 0.000001, 0.0);
+    logger.debug("recon=" + r + " clamped=" + clamped);
+    return clamped;
 }
 
 // -------- #15: fat-max BLUE band is reconFactor()-invariant --------
