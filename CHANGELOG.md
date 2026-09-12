@@ -31,7 +31,6 @@ All notable changes to **Carb Burn** are documented here. Format based on
   high over a falling rate — from 3 s to roughly 28 s from 100 g/h — but for that
   whole window the rate on screen is still substantial, which is the case the old
   3 s rule got wrong in the other direction.
-
 - **The first minute of a ride no longer records an inflated carb/fat rate.**
   The field rescales its power model to your watch's own calorie total. That
   rescaling divided by however much energy the *model* had counted so far, and
@@ -80,7 +79,8 @@ All notable changes to **Carb Burn** are documented here. Format based on
   glycogen store). **A ride with no dropouts is bit-for-bit unaffected.**
 
   Two things bound it. A single gap contributes at most 2.5 s no matter how long
-  it lasts (measured: a 300 s gap contributes 2.499996 s), so a meter that drops
+  it lasts (measured at the default settings: a 300 s gap contributes
+  2.499996 s), so a meter that drops
   for 30 s at a time recovers under a tenth of the lost time, not all of it. And
   accrued pedalling time can never exceed elapsed timer time — the last two rows
   above sit exactly on that ceiling, which is why they stop at the no-dropout

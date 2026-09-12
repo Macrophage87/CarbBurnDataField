@@ -190,12 +190,17 @@ class CarbBurnView extends WatchUi.DataField {
     //   15-minute roll-out, against a true 110.9 - raw factor 60/10.015479 =
     //   5.990727, with the numerator frozen at 60 through the powered phase.
     //   If the device instead keeps counting through that phase the release
-    //   factor is higher still: 6.889336 -> 764 g/h with the count modelled as
-    //   (60 + model kcal) truncated to an integer, which is the only counting
-    //   model anything here can construct - #67 is what would measure the real
-    //   one. An earlier revision of this comment said "664-775"; the 775 was
-    //   taken under a counting model that does not reproduce on this tree and
-    //   is withdrawn.
+    //   factor is higher still, and the two constructible counting models
+    //   differ by one sample. If info.calories for a sample already includes
+    //   that sample's energy, the count at release is (60 + 10.015479)
+    //   truncated = 70 kcal: factor 6.989182 -> 775 g/h. If it lags the model
+    //   by one sample it is (60 + 9.787854) truncated = 69 kcal: factor
+    //   6.889336 -> 764 g/h. Which one a real device follows is unmeasured -
+    //   #67 is what would measure it. An earlier revision of this comment
+    //   gave "664-775" without naming the model; 664 stays the lower bound
+    //   under all three, because any further accrual only raises the factor.
+    //   A later revision withdrew 775 as "not reproducing"; that withdrawal
+    //   was wrong - 775 is the NO-LAG model, measured, and it is restored.
     //   3.0 rather than 2.0 deliberately: 2.0 is exactly the third arm pinned
     //   by test_zonecolor_recon_invariant, so a bound of 2.0 would leave that
     //   test passing on the coincidence that clamping 2.0 to 2.0 is a no-op.

@@ -1176,23 +1176,37 @@ function test_recon_floor_suppresses_cold_start(logger) {
 //
 // This test is also the ONLY upper constraint the suite puts on
 // RECON_MIN_KCAL, and it is a loose one. Measured on this tree: the suite is
-// green and unchanged at a floor of 0.23, 1.0 and 19.5, and reds only at 0.22
-// (the cold-start denominator is 0.227625, so a floor below it stops
-// suppressing the cold start) and at 20.0 (here). The upper break is
-// 60/3.0 = 20.0 kcal reached in 0.455247 kcal steps, i.e. 19.5756. So any
-// value in ~[0.23, 19.57] passes unchanged and 10.0 is a design choice these
-// tests do NOT defend.
+// green and unchanged at a floor of 0.23, 1.0, 19.5, 19.6, 19.7 and 19.8, and
+// reds only at 0.22 (the cold-start denominator is 0.227625, so a floor below
+// it stops suppressing the cold start) and at 19.81 (here). The upper break is
+// 60/3.0 = 20.0 kcal, reached in this test's 200 W steps of 0.227625 kcal,
+// i.e. 87 * 0.227625 = 19.803375 (measured: 19.8 green with maxRecon 3.000000,
+// 19.81 red with maxRecon 2.995361 = 60/(88 * 0.227625)). So any value in
+// ~[0.23, 19.80] passes unchanged and 10.0 is a design choice these tests do
+// NOT defend.
+//
+// An earlier revision of this comment derived that break from a 0.455247 kcal
+// step and put the window at ~[0.23, 19.57]. 0.455247 is the per-sample model
+// kcal at 400 W - the WITNESS fixture's power, not this test's. This test's
+// powered phase runs at 200 W (see mkInfo(200, ...) below), where the step is
+// half that. 19.6, 19.7 and 19.8 all pass, which that revision said they
+// should not. State the power the step belongs to.
 //
 // RED before the fix: peak factor 263.591980, peak carb_rate 29226 against a
 // ceiling of 333. Also red on a FLOOR-ONLY implementation: 5.990727 and 664
 // with the numerator frozen as this test freezes it. If a device instead keeps
-// counting through the powered phase the release factor is higher still -
-// re-measured on this tree at 6.889336 and 764, with the count modelled as
-// (60 + model kcal) truncated to an integer. An earlier revision of this
-// comment said "6.989182 and 775"; that pair was taken under a counting model
-// that does not reproduce here and is withdrawn. Which model a real device
-// follows is unmeasured (#67); freezing the numerator is the conservative
-// choice either way, since any further accrual only raises the factor.
+// counting through the powered phase the release factor is higher still, and
+// the two constructible counting models differ by one sample. If
+// info.calories for a sample already includes that sample's energy, the count
+// at release is (60 + 10.015479) truncated = 70 kcal: factor 6.989182 -> 775
+// g/h. If it lags the model by one sample it is (60 + 9.787854) truncated =
+// 69 kcal: factor 6.889336 -> 764 g/h. Both measured here, side by side on
+// this fixture. Which one a real device follows is unmeasured - #67 is what
+// would measure it - so freezing the numerator is the conservative choice:
+// 664 is the lower bound under all three, because any further accrual only
+// raises the factor. An earlier revision of this comment withdrew the
+// "6.989182 and 775" pair as "not reproducing here"; that withdrawal was
+// wrong - it is the NO-LAG model and it reproduces - and it is restored.
 (:test)
 function test_recon_never_exceeds_band_after_rollout(logger) {
     var CEIL = 3.0;
