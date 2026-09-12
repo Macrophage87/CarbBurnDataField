@@ -75,6 +75,16 @@ All notable changes to **Carb Burn** are documented here. Format based on
 
 ### Added
 
+- **Carb Burn now compiles for the fēnix 9 family.** Seven new watches are
+  declared for this release: fēnix 9 (43 mm, 47 mm), fēnix 9 Pro (43 mm, 47 mm,
+  51 mm) and fēnix 9 Pro Solar (47 mm, 51 mm). Nothing about the model, the
+  layouts or the FIT recording changes. Two caveats worth knowing before you put
+  it on a wrist: as on every round watch, a full-screen grid is drawn to the
+  corners of the square the screen fits inside, so the outermost corners are cut
+  off by the bezel (a half-screen or in-between slot is unaffected); and no fēnix
+  9 has run this app — the field is known to build for these watches, not to have
+  been ridden on one.
+
 - **Speed-axis white-paper figure (Figure 3).** `tools/plot_speed_curves.py`
   renders `speed_curves.png`: speed vs power, speed vs carb rate, and speed vs
   carb %, over the 100–300 W range typical of long rides, for a flat road, a
