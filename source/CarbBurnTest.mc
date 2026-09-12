@@ -1185,8 +1185,14 @@ function test_recon_floor_suppresses_cold_start(logger) {
 //
 // RED before the fix: peak factor 263.591980, peak carb_rate 29226 against a
 // ceiling of 333. Also red on a FLOOR-ONLY implementation: 5.990727 and 664
-// with the numerator frozen (6.989182 and 775 if the device keeps counting
-// through the powered phase - both measured).
+// with the numerator frozen as this test freezes it. If a device instead keeps
+// counting through the powered phase the release factor is higher still -
+// re-measured on this tree at 6.889336 and 764, with the count modelled as
+// (60 + model kcal) truncated to an integer. An earlier revision of this
+// comment said "6.989182 and 775"; that pair was taken under a counting model
+// that does not reproduce here and is withdrawn. Which model a real device
+// follows is unmeasured (#67); freezing the numerator is the conservative
+// choice either way, since any further accrual only raises the factor.
 (:test)
 function test_recon_never_exceeds_band_after_rollout(logger) {
     var CEIL = 3.0;

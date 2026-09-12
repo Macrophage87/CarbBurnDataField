@@ -186,8 +186,16 @@ class CarbBurnView extends WatchUi.DataField {
     //   costs total * (recon - 1), not total. The step at release is below.
     // RECON_MAX - upper bound, and the load-bearing half. A floor alone only
     //   converts an unbounded error into a large one: measured, a 10 kcal floor
-    //   with no clamp still writes 664-775 g/h at the release sample after a
-    //   15-minute roll-out, against a true 110.9.
+    //   with no clamp still writes 664 g/h at the release sample after a
+    //   15-minute roll-out, against a true 110.9 - raw factor 60/10.015479 =
+    //   5.990727, with the numerator frozen at 60 through the powered phase.
+    //   If the device instead keeps counting through that phase the release
+    //   factor is higher still: 6.889336 -> 764 g/h with the count modelled as
+    //   (60 + model kcal) truncated to an integer, which is the only counting
+    //   model anything here can construct - #67 is what would measure the real
+    //   one. An earlier revision of this comment said "664-775"; the 775 was
+    //   taken under a counting model that does not reproduce on this tree and
+    //   is withdrawn.
     //   3.0 rather than 2.0 deliberately: 2.0 is exactly the third arm pinned
     //   by test_zonecolor_recon_invariant, so a bound of 2.0 would leave that
     //   test passing on the coincidence that clamping 2.0 to 2.0 is a no-op.
